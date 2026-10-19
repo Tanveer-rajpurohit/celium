@@ -1,26 +1,29 @@
-# Celium 6 handoff
-Active code: this celium folder. The Downloads copy and Reclaim were reference projects only.
+# Celium 7 handoff
+Active code: this celium folder.
 
-Version: 6.0.0-celium (70). Android debug application ID: app.celium.android.debug. Minimum API 23. Windows starter: existing Android emulator only.
+Version: 7.0.0-celium (71). Android debug application ID: app.celium.android.debug. Minimum API 23. Windows starter: existing Android emulator only.
 
-## Celium 6 changes
-- Light is the default theme; accent colour picker in Settings.
-- Plugin popup guard: no inherited plugin/repository dialogs in normal flows.
-- Infinite scroll on browse; quick-return header; random title button.
-- Details: source/season selectors, recommendations, icon back button, header image.
-- Live source switching, link fallback and highest-quality first.
-- Player download button; download queue visible; no phantom download notification.
-- Full provider catalogue: 23 sources. New: AniKoto, HiAnime, Movies4u (Phisher), Moviesmod (CSX repo), XNXX (CXXX, adult).
+## Celium 7 changes
+- Home is a combined Movies + TV Shows feed (the Celium Feed) with a featured carousel of 3–4 titles.
+- Movies and TV Shows are separate sections; each item lands in exactly one, with section-scoped search.
+- Home provider priority: MultiMovies → CineStream → Moviesmod, then the rest in catalogue order; a missing provider falls back to the next ready one.
+- Feed cache: shown instantly when under 6 hours old; every open refreshes in the background and overwrites the cache.
+- Faster loading: providers load in parallel, shelves appear as they finish, 15 s per-provider timeout.
+- Related videos deduplicated by title URL; MultiMovies paging and quick provider/category switching fixed.
+- Layout size: Small (80%), Medium (default, Celium 6 sizes), Large (125%).
+- Edge-to-edge system bars coloured with the theme background; player fullscreen unchanged.
+- Sources: PikaShow and NetMirror Mobile removed (uninstalled by a one-time migration); CNC Verse, MovieBox and CineStream added. 24 sources.
+- Celium icon and Celium name in user-visible text.
 
 ## Carried forward
-- Neutral themes, offline DM Sans, Celium Feed (up to three ready adapters), single-source search.
+- Light default, accent picker, offline DM Sans, infinite scroll, live source switching, link fallback, player downloads.
 - History independent of resume state; existing playback/download engines retained.
 - Adult OFF by default; AnimePahe and Porn36 excluded.
-- Repositories: Phisher, CXXX, GizliKeyif, CNCVerse, CSX.
+- Repositories: Phisher, CXXX, GizliKeyif, CNC, CSX.
 
-See VERIFICATION.md for build/test evidence and limitations. Celium 6 build results are pending the final build.
+See VERIFICATION.md. Celium 7 build results are pending the final build.
 
 ## Resume safely
-Do not infer source playback or smooth frame rates from passing compilation. Nothing in Celium 6 has been verified on a device. No native Windows .cs3 runtime or built-in VPN was added.
+Do not infer source playback or smooth frame rates from passing compilation. Nothing in Celium 7 has been verified on a device. No native Windows .cs3 runtime or built-in VPN was added.
 
-Keep inherited ABI-sensitive code until dependencies are verified. Read PLAN.md before extending the app. Source policy and types are in app/src/main/java/com/lagradost/cloudstream3/ui/celium/.
+Keep inherited ABI-sensitive code and the existing package/applicationId. Read PLAN.md before extending the app. Source policy and types are in the app's ui/celium/ package.
