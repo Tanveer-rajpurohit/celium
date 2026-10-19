@@ -204,7 +204,7 @@ class CeliumViewModel : ViewModel() {
     private fun permitsFor(api: MainAPI): Semaphore =
         synchronized(providerPermits) { providerPermits.getOrPut(api.name) { Semaphore(2) } }
     private fun key(section: CeliumSection, source: CeliumSource, home: Boolean = false) =
-        if (home) HOME_CACHE_KEY else "celium_feed_v2_${section.name}_${source.id}"
+        if (home) "celium_feed_v2_Home_${source.id}" else "celium_feed_v2_${section.name}_${source.id}"
     private fun key(state: CeliumState) = key(state.section, state.source, state.home)
 
     /** A result may be shown only if its request is current and still for the selected source (16.6, 16.11). */
@@ -358,7 +358,7 @@ class CeliumViewModel : ViewModel() {
         val current = _state.value
         if (source !in CeliumSources.choices(current.section)) return
         if (source == current.source) return
-        select(current.section, source, home = current.home && source.id == "celium")
+        select(current.section, source, home = current.home)
     }
 
     private fun cancelJobs() {

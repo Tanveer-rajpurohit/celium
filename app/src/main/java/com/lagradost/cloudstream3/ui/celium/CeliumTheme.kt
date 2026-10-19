@@ -98,6 +98,7 @@ internal tailrec fun Context.findActivity(): Activity? = when (this) {
  * BaseComposeFragment already pads its root view via fixSystemBarsPadding (top + end, and bottom
  * in landscape), and the bottom nav pads the navigation bar, so applying this there would double-pad.
  */
+@Composable
 fun Modifier.celiumSystemBars(): Modifier =
     windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
 

@@ -71,7 +71,8 @@ class CeliumPolicyTest {
     fun `plugin allowlist requires the exact repository and artifact identity`() {
         assertTrue(CeliumSources.allowsPlugin(CeliumSources.GIZLI, "Beeg"))
         assertTrue(CeliumSources.allowsPlugin(CeliumSources.CXXX, "FXPrnHD"))
-        assertTrue(CeliumSources.allowsPlugin(CeliumSources.CNC, "CNC Verse Mobile"))
+        assertTrue(CeliumSources.allowsPlugin(CeliumSources.CNC, "CNC Verse"))
+        assertFalse(CeliumSources.allowsPlugin(CeliumSources.CNC, "CNC Verse Mobile"))
         assertFalse(CeliumSources.allowsPlugin(CeliumSources.CXXX, "Beeg"))
         assertFalse(CeliumSources.allowsPlugin("https://untrusted.example/repo.json", "Beeg"))
         assertFalse(CeliumSources.allowsPlugin(CeliumSources.PHISHER, "Ultima"))

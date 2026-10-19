@@ -9,10 +9,16 @@ Command (JDK 17, Windows):
 
 | Check | Result |
 | --- | --- |
-| Android assembly / Kotlin compilation | Pending final build |
-| Unit tests | Pending final build |
-| APK versionName / versionCode | Pending final build (expected 7.0.0-celium / 71) |
-| APK SHA-256 | Pending final build |
+| Android assembly / Kotlin compilation | BUILD SUCCESSFUL, exit 0, no source fixes needed |
+| Unit tests | 30 run, 0 failures, 0 errors, 0 skipped |
+| APK (aapt2 dump badging) | package app.celium.android.debug, versionName 7.0.0-celium, versionCode 71, label Celium |
+| APK size | 92,570,396 bytes |
+| APK SHA-256 | `ADDFC0581F1A5345BDB62DCD903360D6B4393E9225C4FCFA547BD4142A20EBA9` |
+
+## Release outputs
+- `celium-7.0.0.apk` (workspace root) and `windows\celium.apk`, both with the SHA-256 above.
+- `Celium-7.0.0-PC.zip` (workspace root): one root folder `Celium/` containing `celium.apk`, `Start Celium.cmd`, `Start-Celium.ps1`, `celium-windows.json`, `bin/Celium.cmd`, `README.md`.
+- Launcher check: `bin\Celium.cmd -ValidateOnly` was run from an extracted copy of the zip. It started and reported config validation ("Set sdkPath in celium-windows.json to your existing Android SDK folder."), which is the expected result when no SDK is configured. Exit 1, then `pause`.
 
 ## Sources
 24 selected artifacts. The 21 carried forward from Celium 6 keep their earlier records. The 3 Celium 7 additions (CNC Verse v114 and MovieBoxProvider v52 from the CNC repo, CineStream v487 from the CSX repo) were checked against live plugins.json listings; their packages and hashes are unverified. PikashowProvider and CNC Verse Mobile are removed.

@@ -496,6 +496,12 @@ object UIHelper {
 
             WindowInsetsCompat.CONSUMED
         }
+        // Insets are not re-dispatched to a view attached later, so ask again once attached.
+        if (v.isAttachedToWindow) ViewCompat.requestApplyInsets(v)
+        else v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) { view.removeOnAttachStateChangeListener(this); ViewCompat.requestApplyInsets(view) }
+            override fun onViewDetachedFromWindow(view: View) {}
+        })
     }
 
     fun Context.getNavigationBarHeight(): Int {
