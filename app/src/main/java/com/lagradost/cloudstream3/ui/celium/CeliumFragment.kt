@@ -32,6 +32,7 @@ open class CeliumFragment : BaseComposeFragment() {
         CeliumScreen(
             state = state, searchMode = searchMode, randomEnabled = randomEnabled,
             onSection = model::selectSection, onSource = model::selectSource,
+            onHome = model::selectHome,
             onQuery = model::query, onRefresh = model::forceRefresh,
             onMore = model::more, onMoreSearch = model::moreSearch,
             onSections = model::moreSections, onRetry = model::retry,

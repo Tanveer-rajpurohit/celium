@@ -1,6 +1,21 @@
 package com.lagradost.cloudstream3.ui.celium
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.Build
+import android.view.View
+import android.view.Window
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -39,7 +54,52 @@ object CeliumStyle {
         setKey("celium_accent_v2", safe)
         return true
     }
+
+    /** Pure: whether [mode] renders dark, given the system night setting. */
+    fun isDark(mode: String, systemDark: Boolean): Boolean = mode == "Dark" || (mode == "System" && systemDark)
+
+    /** Theme background as opaque ARGB; shared by Compose, the window bars, and the bottom nav. */
+    fun backgroundArgb(dark: Boolean): Int = if (dark) 0xFF0C0C0C.toInt() else 0xFFFAFAFA.toInt()
+
+    /** Foreground on [backgroundArgb] as opaque ARGB. */
+    fun onBackgroundArgb(dark: Boolean): Int = if (dark) 0xFFF5F5F5.toInt() else 0xFF242424.toInt()
+
+    /**
+     * Colours the status and navigation bars with the theme background and picks icon contrast
+     * (dark icons on light themes, light icons on dark themes). Only changes colour/appearance,
+     * never visibility, so the player's immersive mode is unaffected (Req 11.2–11.5, 11.7).
+     */
+    fun applySystemBars(window: Window, view: View, dark: Boolean) {
+        val background = backgroundArgb(dark)
+        @Suppress("DEPRECATION")
+        run {
+            // Ignored on API 35+, where edge-to-edge bars are transparent and show the content behind.
+            window.statusBarColor = background
+            window.navigationBarColor = background
+        }
+        // Without this, API 29+ draws a translucent scrim over the gesture/nav bar.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
 }
+
+/** Unwraps a [Context] to its hosting [Activity], if any. */
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
+ * System-bar padding for Celium screens that are NOT hosted in a BaseComposeFragment.
+ * BaseComposeFragment already pads its root view via fixSystemBarsPadding (top + end, and bottom
+ * in landscape), and the bottom nav pads the navigation bar, so applying this there would double-pad.
+ */
+fun Modifier.celiumSystemBars(): Modifier =
+    windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
 
 /** CeliumColor returns 24-bit 0xRRGGBB; add opaque alpha for Compose. */
 internal fun opaque(rgb: Int): Color = Color(0xFF000000.toInt() or (rgb and 0xFFFFFF))
@@ -48,7 +108,15 @@ internal fun opaque(rgb: Int): Color = Color(0xFF000000.toInt() or (rgb and 0xFF
 fun CeliumTheme(content: @Composable () -> Unit) {
     val mode by CeliumStyle.mode.collectAsState()
     val custom by CeliumStyle.accent.collectAsState()
-    val dark = mode == "Dark" || (mode == "System" && isSystemInDarkTheme())
+    val dark = CeliumStyle.isDark(mode, isSystemInDarkTheme())
+    // Re-colour the system bars whenever the theme changes, without a restart (Req 11.5).
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        DisposableEffect(view, dark) {
+            view.context.findActivity()?.window?.let { CeliumStyle.applySystemBars(it, view, dark) }
+            onDispose { }
+        }
+    }
     // Saved accent (or the mode's neutral), passed through the 4.5:1 contrast guard.
     val accentRgb = androidx.compose.runtime.remember(custom, dark) { CeliumColor.effectiveAccent(custom, dark) }
     val primary = opaque(accentRgb)
@@ -57,7 +125,7 @@ fun CeliumTheme(content: @Composable () -> Unit) {
     val colors = if (dark) darkColorScheme(
         primary = primary, onPrimary = foreground,
         secondary = primary, onSecondary = foreground,
-        background = Color(0xFF0C0C0C), onBackground = Color(0xFFF5F5F5),
+        background = Color(CeliumStyle.backgroundArgb(true)), onBackground = Color(CeliumStyle.onBackgroundArgb(true)),
         surface = Color(0xFF161616), onSurface = Color(0xFFF5F5F5),
         surfaceVariant = Color(0xFF242424), onSurfaceVariant = Color(0xFFBBBBBB),
         secondaryContainer = Color(0xFF303030), onSecondaryContainer = Color.White,
@@ -65,7 +133,7 @@ fun CeliumTheme(content: @Composable () -> Unit) {
     ) else lightColorScheme(
         primary = primary, onPrimary = foreground,
         secondary = primary, onSecondary = foreground,
-        background = Color(0xFFFAFAFA), onBackground = Color(0xFF242424),
+        background = Color(CeliumStyle.backgroundArgb(false)), onBackground = Color(CeliumStyle.onBackgroundArgb(false)),
         surface = Color.White, onSurface = Color(0xFF242424),
         surfaceVariant = Color(0xFFF0F0F0), onSurfaceVariant = Color(0xFF606060),
         secondaryContainer = Color(0xFFE8E8E8), onSecondaryContainer = Color(0xFF242424),

@@ -39,6 +39,10 @@ import androidx.core.view.isVisible
 import androidx.core.view.marginStart
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.core.graphics.ColorUtils
+import com.lagradost.cloudstream3.ui.celium.CeliumStyle
+import kotlinx.coroutines.launch
 import androidx.navigation.NavController
 import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -1203,6 +1207,33 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
         }
     }
 
+    /** Colours the system bars and the bottom nav / rail with the Celium theme background. */
+    private fun applyCeliumChrome(mode: String) {
+        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val dark = CeliumStyle.isDark(mode, systemDark)
+        CeliumStyle.applySystemBars(window, window.decorView, dark)
+        val background = CeliumStyle.backgroundArgb(dark)
+        val foreground = CeliumStyle.onBackgroundArgb(dark)
+        // Legacy ?attr/textColor may not contrast with the Celium background, so tint items too.
+        val tint = ColorStateList(
+            arrayOf(
+                intArrayOf(android.R.attr.state_checked),
+                intArrayOf(android.R.attr.state_focused),
+                intArrayOf(),
+            ),
+            intArrayOf(foreground, foreground, ColorUtils.setAlphaComponent(foreground, 0x99)),
+        )
+        binding?.apply {
+            navView.setBackgroundColor(background)
+            navView.itemIconTintList = tint
+            navView.itemTextColor = tint
+            navRailView.setBackgroundColor(background)
+            navRailView.itemIconTintList = tint
+            navRailView.itemTextColor = tint
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         PopupGuard.install(this)
         app.initClient(this, ignoreSSL = false)
@@ -1323,6 +1354,13 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
                 padRight = false,
                 padTop = false
             )
+
+            // Celium (Req 11): the nav view already pads the navigation-bar inset above, so the
+            // system nav bar sits over it; match its colour to the Celium background and keep the
+            // bars in sync whenever the theme changes.
+            lifecycleScope.launch {
+                CeliumStyle.mode.collect { mode -> applyCeliumChrome(mode) }
+            }
 
             composeView.apply {
                 setContent {

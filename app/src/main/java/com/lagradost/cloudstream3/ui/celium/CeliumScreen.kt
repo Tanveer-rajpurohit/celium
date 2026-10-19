@@ -52,6 +52,7 @@ import com.lagradost.cloudstream3.USER_AGENT
 fun CeliumScreen(
     state: CeliumState, searchMode: Boolean,
     onSection: (CeliumSection) -> Unit, onSource: (CeliumSource) -> Unit,
+    onHome: () -> Unit,
     onQuery: (String) -> Unit, onRefresh: () -> Unit,
     onMore: (CeliumShelf) -> Unit, onMoreSearch: () -> Unit,
     onOpen: (SearchResponse, Boolean) -> Unit,
@@ -64,9 +65,9 @@ fun CeliumScreen(
     val preparing = state.binding == BindStatus.Waiting
     val bindFailure = (state.binding as? BindStatus.Failed)?.message
     var sourceSheet by rememberSaveable { mutableStateOf(false) }
-    var collectionKey by rememberSaveable(state.section, state.source.id) { mutableStateOf<String?>(null) }
-    // Quick-return header (Requirement 11): resets to visible on Section, source or mode change (11.7).
-    val quickReturn = rememberQuickReturnState(state.section, state.source.id, searchMode)
+    var collectionKey by rememberSaveable(state.home, state.section, state.source.id) { mutableStateOf<String?>(null) }
+    // Quick-return header (Requirement 11): resets to visible on Home/Section, source or mode change (11.7).
+    val quickReturn = rememberQuickReturnState(state.home, state.section, state.source.id, searchMode)
     var searchFocused by remember { mutableStateOf(false) }
     val touchExploring = rememberTouchExploration()
     // Header stays fully visible while typing a query or while touch exploration is on (11.5, 11.10).
@@ -77,7 +78,9 @@ fun CeliumScreen(
             BoxWithConstraints {
                 val wide = maxWidth >= 840.dp
                 val edge = if (maxWidth >= 840.dp) 32.dp else 16.dp
-                val width = if (maxWidth >= 840.dp) 168.dp else ((maxWidth - 44.dp) / 2.25f).coerceIn(132.dp, 160.dp)
+                // Medium card width, then scaled by the chosen Layout_Size (Req 8).
+                val medium = if (maxWidth >= 840.dp) 168.dp else ((maxWidth - 44.dp) / 2.25f).coerceIn(132.dp, 160.dp)
+                val width = rememberCeliumCardWidth(medium)
                 QuickReturnLayout(quickReturn, Modifier.fillMaxSize(), header = { Column {
                     Row(Modifier.fillMaxWidth().padding(horizontal = edge).height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(if (searchMode) "Search" else "celium", Modifier.weight(1f).semantics { heading() },
@@ -105,26 +108,26 @@ fun CeliumScreen(
                     }
                 } }, pinned = { Column {
                     LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                        // Home is the first tab (Req 3); other tabs leave Home via selectSection.
+                        item(key = "home") { CategoryTab("Home", state.home, onHome) }
                         items(CeliumSection.entries.filter { state.adultEnabled || it != CeliumSection.Adult }, key = { it.name }) { section ->
-                            Column(Modifier.clickable { onSection(section) }.padding(vertical = 12.dp)) {
-                                Text(section.label, fontWeight = if (state.section == section) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (state.section == section) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant)
-                                Box(Modifier.padding(top = 8.dp).width(if (state.section == section) 24.dp else 0.dp).height(2.dp).background(MaterialTheme.colorScheme.onBackground))
-                            }
+                            CategoryTab(section.label, !state.home && state.section == section) { onSection(section) }
                         }
                     }
                     if (state.searching || state.busy || preparing) LinearProgressIndicator(Modifier.fillMaxWidth())
                 } }) {
-                    key(state.section, state.source.id, searchMode) {
+                    key(state.home, state.section, state.source.id, searchMode) {
                         if (searchMode) SearchContent(state, edge, width, onQuery, onMoreSearch, onOpen, Modifier.fillMaxSize(), onRetry,
                             onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn)
                         else {
                         val feedList = rememberLazyListState()
                         ResetHeaderAtTop(quickReturn) { feedList.firstVisibleItemIndex == 0 && feedList.firstVisibleItemScrollOffset == 0 }
                         val notice = bindFailure ?: state.feedError?.let { "$it Retry, or choose another source." } ?: state.message
-                        val hero = state.shelves.firstOrNull()?.cards?.firstOrNull()
+                        // Featured_Carousel source: every loaded card; the carousel picks 3–4 unique items itself.
+                        val featuredItems = remember(state.shelves) { state.shelves.flatMap { it.cards } }
+                        val showFeatured = state.shelves.isNotEmpty()
                         // Items placed before the shelves, so visible indexes map onto shelf positions.
-                        val lead = listOf(notice != null, hero != null, state.resume.isNotEmpty()).count { it }
+                        val lead = listOf(notice != null, showFeatured, state.resume.isNotEmpty()).count { it }
                         val sectionsPaging = state.page(CeliumState.SECTIONS)
                         InfiniteScrollEffect(
                             lastVisibleIndex = { feedList.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.minus(lead) },
@@ -144,18 +147,10 @@ fun CeliumScreen(
                                     }
                                 }
                             }
-                            if (hero != null) item("hero") {
-                                Row(Modifier.padding(horizontal = edge).fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surface).clickable { onOpen(hero, false) }
-                                    .padding(16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    CeliumArtwork(hero.posterUrl, hero.posterHeaders, Modifier.width(if (wide) 168.dp else 104.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("FEATURED", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(hero.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                        Text(state.section.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Button(onClick = { onOpen(hero, false) }, shape = RoundedCornerShape(8.dp)) { Text("View details") }
-                                    }
-                                }
+                            // Featured_Carousel on Home and Section feeds; renders nothing with < 3 unique items.
+                            if (showFeatured) item("featured") {
+                                CeliumFeaturedCarousel(items = featuredItems, width = width, edge = edge,
+                                    onPlay = { onOpen(it, true) }, onDetails = { onOpen(it, false) }, wide = wide)
                             }
                             if (state.resume.isNotEmpty()) item("continue") {
                                 CeliumShelfView("Continue watching", state.resume, width, edge, { onOpen(it, true) })
@@ -182,15 +177,13 @@ fun CeliumScreen(
                             if (state.remainingSections > 0 || sectionsPaging.status == PageStatus.Error) item("sections-footer") {
                                 PagingFooter(sectionsPaging, onRetry = { onRetryPaging(CeliumState.SECTIONS) }, Modifier.padding(horizontal = edge))
                             }
-                            if (state.shelves.isEmpty()) item("empty") {
-                                when {
-                                    preparing -> CeliumEmpty("Preparing ${state.source.label}",
-                                        "Content loads as soon as this source is ready.")
-                                    state.busy -> CeliumEmpty("Preparing your feed",
-                                        "Retry, or choose another source. Search is available in its own tab.")
-                                    else -> CeliumEmpty("Your feed is unavailable",
-                                        "Retry, or choose another source. Search is available in its own tab.")
-                                }
+                            // Loading with nothing shown yet: shelf placeholders instead of an empty message.
+                            val loading = (state.busy || preparing) && bindFailure == null && state.feedError == null
+                            if (state.shelves.isEmpty() && loading) items(3, key = { "placeholder:$it" }, contentType = { "placeholder" }) {
+                                CeliumShelfPlaceholder(width, edge)
+                            } else if (state.shelves.isEmpty()) item("empty") {
+                                CeliumEmpty("Your feed is unavailable",
+                                    "Retry, or choose another source. Search is available in its own tab.")
                             }
                         }
                         }
@@ -286,6 +279,16 @@ private fun SearchContent(state: CeliumState, edge: Dp, width: Dp, onQuery: (Str
                 PagingFooter(paging, onRetry = onRetryPaging)
             }
         }
+    }
+}
+
+/** One category tab (Home or a Section); the selected tab is bold with an underline. */
+@Composable
+private fun CategoryTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Column(Modifier.clickable(onClick = onClick).padding(vertical = 12.dp)) {
+        Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(Modifier.padding(top = 8.dp).width(if (selected) 24.dp else 0.dp).height(2.dp).background(MaterialTheme.colorScheme.onBackground))
     }
 }
 

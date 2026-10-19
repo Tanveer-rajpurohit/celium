@@ -55,9 +55,65 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.platform.LocalContext
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.USER_AGENT
 import kotlinx.coroutines.launch
+
+/**
+ * Card Layout_Size for the current subtree (Requirement 9). Defaults to Medium; a screen may
+ * provide the observed value once so nested composables read it without re-collecting.
+ */
+val LocalCeliumLayoutSize: ProvidableCompositionLocal<CeliumLayoutSize> =
+    compositionLocalOf { CeliumLayoutSize.Medium }
+
+/** Observes the persisted Layout_Size; recomposes on change without a restart (9.6). */
+@Composable
+fun rememberCeliumLayoutSize(): CeliumLayoutSize {
+    val context = LocalContext.current
+    val flow = remember(context) { CeliumPrefs.layoutSize(context) }
+    val size by flow.collectAsState()
+    return size
+}
+
+/**
+ * Card width for the observed Layout_Size: [medium] scaled by the size factor (9.3–9.5).
+ * Only widths change; fonts and colours stay as they are (9.7). Grid columns derive from
+ * this width via `GridCells.Adaptive`.
+ */
+@Composable
+fun rememberCeliumCardWidth(medium: Dp): Dp = rememberCeliumLayoutSize().cardWidth(medium)
+
+/**
+ * Poster request decoded at the displayed card size (Requirement 5.2): [widthPx] by a 2:3
+ * height, no crossfade, with the provider [headers] plus the app User-Agent.
+ */
+fun celiumPosterRequest(
+    context: Context,
+    url: String?,
+    headers: Map<String, String>?,
+    widthPx: Int,
+): ImageRequest {
+    val w = widthPx.coerceAtLeast(1)
+    return ImageRequest.Builder(context)
+        .data(url)
+        .httpHeaders(NetworkHeaders.Builder().also { values ->
+            values["User-Agent"] = USER_AGENT
+            headers?.forEach { (name, value) -> values[name] = value }
+        }.build())
+        .size(w, w * 3 / 2)
+        .crossfade(false)
+        .build()
+}
 
 /** Icon-only back control with a 48dp touch target. */
 @Composable
