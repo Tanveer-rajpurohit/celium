@@ -179,7 +179,7 @@ fun InfiniteScrollEffect(
     val current by rememberUpdatedState(status)
     val load by rememberUpdatedState(onLoadMore)
     val visible by rememberUpdatedState(lastVisibleIndex)
-    LaunchedEffect(threshold) {
+    LaunchedEffect(threshold, loadedCount, status) {
         snapshotFlow { CeliumPaging.shouldRequest(visible(), count, threshold, current) }
             .distinctUntilChanged()
             .filter { it }

@@ -121,19 +121,23 @@ fun CeliumScreen(
                             onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn)
                         else {
                         val feedList = rememberLazyListState()
+                        // Each newly opened tab or source starts at the top with the header visible.
+                        LaunchedEffect(Unit) { feedList.scrollToItem(0); quickReturn.offset = 0f }
                         ResetHeaderAtTop(quickReturn) { feedList.firstVisibleItemIndex == 0 && feedList.firstVisibleItemScrollOffset == 0 }
                         val notice = bindFailure ?: state.feedError?.let { "$it Retry, or choose another source." } ?: state.message
-                        // Featured_Carousel source: every loaded card; the carousel picks 3–4 unique items itself.
-                        val featuredItems = remember(state.shelves) { state.shelves.flatMap { it.cards } }
-                        val showFeatured = state.shelves.isNotEmpty()
+                        val hero = state.shelves.firstOrNull()?.cards?.firstOrNull()
                         // Items placed before the shelves, so visible indexes map onto shelf positions.
-                        val lead = listOf(notice != null, showFeatured, state.resume.isNotEmpty()).count { it }
+                        val lead = listOf(notice != null, hero != null, state.resume.isNotEmpty()).count { it }
                         val sectionsPaging = state.page(CeliumState.SECTIONS)
                         InfiniteScrollEffect(
                             lastVisibleIndex = { feedList.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.minus(lead) },
                             loadedCount = state.shelves.size,
                             threshold = CeliumPaging.SHELF_THRESHOLD,
-                            status = if (state.remainingSections > 0) sectionsPaging.status else PageStatus.End,
+                            status = when {
+                                state.busy -> PageStatus.Loading
+                                state.remainingSections > 0 -> sectionsPaging.status
+                                else -> PageStatus.End
+                            },
                             onLoadMore = onSections,
                         )
                         LazyColumn(Modifier.fillMaxSize(), state = feedList, contentPadding = PaddingValues(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -147,10 +151,22 @@ fun CeliumScreen(
                                     }
                                 }
                             }
-                            // Featured_Carousel on Home and Section feeds; renders nothing with < 3 unique items.
-                            if (showFeatured) item("featured") {
-                                CeliumFeaturedCarousel(items = featuredItems, width = width, edge = edge,
-                                    onPlay = { onOpen(it, true) }, onDetails = { onOpen(it, false) }, wide = wide)
+                            if (hero != null) item("hero") {
+                                Row(Modifier.padding(horizontal = edge).fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface).clickable { onOpen(hero, false) }.padding(16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    CeliumArtwork(hero.posterUrl, hero.posterHeaders,
+                                        Modifier.width(if (wide) 168.dp else 104.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("FEATURED", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(hero.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                                            maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                        Text(if (state.home) "Home" else state.section.label, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Button(onClick = { onOpen(hero, false) }, shape = RoundedCornerShape(8.dp)) { Text("View details") }
+                                    }
+                                }
                             }
                             if (state.resume.isNotEmpty()) item("continue") {
                                 CeliumShelfView("Continue watching", state.resume, width, edge, { onOpen(it, true) })
@@ -197,6 +213,8 @@ fun CeliumScreen(
                         text = { Text("Random") },
                         icon = { Icon(painterResource(R.drawable.ic_baseline_play_arrow_24), null) },
                         onClick = { if (canPick) CeliumRandom.pick(candidates)?.let { onOpen(it, false) } },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.align(Alignment.BottomStart).padding(edge)
                             .alpha(if (canPick) 1f else 0.38f)
                             .semantics {

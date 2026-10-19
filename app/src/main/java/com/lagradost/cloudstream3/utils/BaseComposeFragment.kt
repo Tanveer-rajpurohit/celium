@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.ViewCompat
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import com.lagradost.cloudstream3.R
@@ -44,6 +45,13 @@ abstract class BaseComposeFragment : Fragment(), Screen {
             padLeft = isLayout(TV or EMULATOR),
             padBottom = isLandscape()
         )
+        // Re-dispatch insets so the header clears the status bar on first show.
+        ViewCompat.requestApplyInsets(view)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        view?.let { ViewCompat.requestApplyInsets(it) }
     }
 }
 
