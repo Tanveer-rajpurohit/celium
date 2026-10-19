@@ -1,0 +1,205 @@
+{
+  "checkedOn": "2026-10-18",
+  "scope": "SHA-256 and extension ZIP manifest/classes.dex inspection; packages not executed. This does not verify source websites or playback.",
+  "note": "Carried-forward package/digest inspection of the 18 retained artifacts; AnimePahe excluded from this version. Not a website or playback verification.",
+  "artifacts": [
+    {
+      "internalName": "MultiMoviesProvider",
+      "version": 55,
+      "expectedVersion": 55,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.phisher98.MultiMoviesProviderPlugin",
+      "bytes": 143827,
+      "error": null
+    },
+    {
+      "internalName": "HDhub4u",
+      "version": 57,
+      "expectedVersion": 57,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.hdhub4u.HDhub4uPlugin",
+      "bytes": 115526,
+      "error": null
+    },
+    {
+      "internalName": "Hdmovie2",
+      "version": 6,
+      "expectedVersion": 6,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.Hdmovie2.Hdmovie2Plugin",
+      "bytes": 72257,
+      "error": null
+    },
+    {
+      "internalName": "Anichi",
+      "version": 29,
+      "expectedVersion": 29,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.Anichi.AnichiPlugin",
+      "bytes": 209794,
+      "error": null
+    },
+    {
+      "internalName": "AnimeDekhoProvider",
+      "version": 72,
+      "expectedVersion": 72,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.phisher98.AnimeDekhoPlugin",
+      "bytes": 147328,
+      "error": null
+    },
+    {
+      "internalName": "Beeg",
+      "version": 6,
+      "expectedVersion": 6,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kraptor.BeegPlugin",
+      "bytes": 32717,
+      "error": null
+    },
+    {
+      "internalName": "PornHat",
+      "version": 4,
+      "expectedVersion": 4,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kerimmkirac.PornHatPlugin",
+      "bytes": 15343,
+      "error": null
+    },
+    {
+      "internalName": "FreePornVideos",
+      "version": 5,
+      "expectedVersion": 5,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kerimmkirac.FreePornVideosPlugin",
+      "bytes": 15234,
+      "error": null
+    },
+    {
+      "internalName": "PornHub",
+      "version": 7,
+      "expectedVersion": 7,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kraptor.PornHubPlugin",
+      "bytes": 17522,
+      "error": null
+    },
+    {
+      "internalName": "FapGoat",
+      "version": 2,
+      "expectedVersion": 2,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.byayzen.FapGoatPlugin",
+      "bytes": 31353,
+      "error": null
+    },
+    {
+      "internalName": "HQPorner",
+      "version": 4,
+      "expectedVersion": 4,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kraptor.HQPornerPlugin",
+      "bytes": 16637,
+      "error": null
+    },
+    {
+      "internalName": "Porn00",
+      "version": 8,
+      "expectedVersion": 8,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kerimmkirac.Porn00Plugin",
+      "bytes": 29438,
+      "error": null
+    },
+    {
+      "internalName": "Xhamster",
+      "version": 12,
+      "expectedVersion": 12,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.kraptor.xHamsterProvider",
+      "bytes": 21126,
+      "error": null
+    },
+    {
+      "internalName": "xVideos",
+      "version": 7,
+      "expectedVersion": 7,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.byayzen.xVideosPlugin",
+      "bytes": 15785,
+      "error": null
+    },
+    {
+      "internalName": "Youperv",
+      "version": 3,
+      "expectedVersion": 3,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.byayzen.YoupervPlugin",
+      "bytes": 12931,
+      "error": null
+    },
+    {
+      "internalName": "FXPrnHD",
+      "version": 3,
+      "expectedVersion": 3,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.CXXX.FXPrnHDPlugin",
+      "bytes": 12110,
+      "error": null
+    },
+    {
+      "internalName": "PikashowProvider",
+      "version": 32,
+      "expectedVersion": 32,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.cncverse.PikashowPlugin",
+      "bytes": 82128,
+      "error": null
+    },
+    {
+      "internalName": "CNC Verse Mobile",
+      "version": 11,
+      "expectedVersion": 11,
+      "versionMatch": true,
+      "sha256Verified": true,
+      "androidDexPresent": true,
+      "pluginClass": "com.horis.cncverse.CNCVersePlugin",
+      "bytes": 97614,
+      "error": null
+    }
+  ]
+}

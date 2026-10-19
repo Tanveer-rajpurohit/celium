@@ -1,0 +1,230 @@
+{
+  "reviewedOn": "2026-10-18",
+  "note": "18 selected legacy artifacts. AnimePahe and Porn36 excluded. Adult disabled by default; live playback not verified. Celium Feed is an app-owned coordinator, not an extra binary.",
+  "artifacts": [
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "MultiMoviesProvider",
+      "version": 55,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/MultiMoviesProvider.cs3",
+      "fileHash": "sha256-86a994d654cd738591399be533f998fa5a294e22dd91f710326c689742e8c93b",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "HDhub4u",
+      "version": 57,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/HDhub4u.cs3",
+      "fileHash": "sha256-9013b566ee66cd761dc9fe327996aeca7f27370cd1b278fa5cab9cf1472f9256",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "Hdmovie2",
+      "version": 6,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/Hdmovie2.cs3",
+      "fileHash": "sha256-a0d3ebf3531162f5cc89fdc13e1ae4e8fa9886878d2e7645d64a692dcd635ed6",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "Anichi",
+      "version": 29,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/Anichi.cs3",
+      "fileHash": "sha256-2f05a1c836915a0afb5b467d65e067ade30d970f4410dc183df8a72d3ea8d2aa",
+      "authors": [
+        "Hexated,Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "AnimeDekhoProvider",
+      "version": 72,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/AnimeDekhoProvider.cs3",
+      "fileHash": "sha256-4d418aaf48fc722ebd6f3ed7acff2d259ee1ba468b71b5424f795beda09f0677",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "Beeg",
+      "version": 6,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/Beeg.cs3",
+      "fileHash": "sha256-9c5fdf6228285738790e62dd50a6d8b31c99c997b0714b500b237156fa11ec5d",
+      "authors": [
+        "kraptor"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "PornHat",
+      "version": 4,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/PornHat.cs3",
+      "fileHash": "sha256-77cfbc51ac169e4d7a31ffe022592c38d20eaed8c626989b167f845743fb5fd1",
+      "authors": [
+        "kerimmkirac"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "FreePornVideos",
+      "version": 5,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/FreePornVideos.cs3",
+      "fileHash": "sha256-96dae006afb9fcb5a904c04d4425ef09c3fae8b85d73e0a2761d2563d069c2e4",
+      "authors": [
+        "kerimmkirac"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "PornHub",
+      "version": 7,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/PornHub.cs3",
+      "fileHash": "sha256-0760bc84c515b454ca6ada808234efb41f0ca81008048a71b6f9b5fd42b3057d",
+      "authors": [
+        "kraptor"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "FapGoat",
+      "version": 2,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/FapGoat.cs3",
+      "fileHash": "sha256-1fb83d587916a4462765e361e73ab99cab229955658a3cda7f0515ec1f6278ce",
+      "authors": [
+        "ByAyzen"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "HQPorner",
+      "version": 4,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/HQPorner.cs3",
+      "fileHash": "sha256-09d0adb9a5cd33033cf38ba1c82853007ec0d6fdfc19175c117c3c50e4f9a521",
+      "authors": [
+        "kraptor"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "Porn00",
+      "version": 8,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/Porn00.cs3",
+      "fileHash": "sha256-b7290c0a086fcd08c6b0cbf0d08d81aca7b81f09a3804af7ffbaeef1636b6b07",
+      "authors": [
+        "kraptor",
+        "kerimmkirac"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "Xhamster",
+      "version": 12,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/Xhamster.cs3",
+      "fileHash": "sha256-84adf1ca45cb0b27e3c726c6cd60f4db23d5e24a30335c68ed117db8bbc999bd",
+      "authors": [
+        "kraptor",
+        "coxju",
+        "SIX"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "xVideos",
+      "version": 7,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/xVideos.cs3",
+      "fileHash": "sha256-b91d52732a4023273d76ae01f63f01854443e129da2845f8e13b687074760e0b",
+      "authors": [
+        "ByAyzen",
+        "SIX"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json",
+      "internalName": "Youperv",
+      "version": 3,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/builds/Youperv.cs3",
+      "fileHash": "sha256-d7533fc6b2df1a0ccd61292ca8f07a4f794df75e995212a34c22704c6b835e3e",
+      "authors": [
+        "ByAyzen"
+      ],
+      "sourceRepository": "https://github.com/Kraptor123/Cs-GizliKeyif"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/CXXX/builds/CXXX.json",
+      "internalName": "FXPrnHD",
+      "version": 3,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/CXXX/builds/FXPrnHD.cs3",
+      "fileHash": "sha256-bc4fab1c2c91c3a666a71d33b590ff42bc271a18139a1043a4c3a29994786e72",
+      "authors": [
+        "Sora",
+        "keyiflerolsun",
+        "ramio23",
+        "phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/CXXX"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
+      "internalName": "PikashowProvider",
+      "version": 32,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/PikashowProvider.cs3",
+      "fileHash": "sha256-1375d18dfc913d2e03036c1aeeccfb46ee266108a6e2e467b7d6f3f4b2ff6d2d",
+      "authors": [
+        "NivinCNC"
+      ],
+      "sourceRepository": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
+      "internalName": "CNC Verse Mobile",
+      "version": 11,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC Verse Mobile.cs3",
+      "fileHash": "sha256-356a0faa2ca6ada4dc112093dfab893c89ea3fa2f4c5ca777d1e77dc125c7a04",
+      "authors": [
+        "NivinCNC"
+      ],
+      "sourceRepository": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension"
+    }
+  ],
+  "adultDefault": false
+}

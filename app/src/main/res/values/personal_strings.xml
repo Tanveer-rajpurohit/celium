@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cinema_search_hint">Find a title across your installed sources</string>
+    <string name="cinema_search_no_sources">No sources available. Check Extensions in Settings.</string>
+    <string name="cinema_search_progress">%1$d results · %2$d/%3$d sources</string>
+    <string name="cinema_search_failed"> · %1$d unavailable</string>
+    <string name="cinema_play_pause">Play or pause</string>
+    <string name="cinema_seek_back">Seek backward</string>
+    <string name="cinema_seek_forward">Seek forward</string>
+    <string name="app_proxy_title">App proxy</string>
+    <string name="app_proxy_summary">Optional http://host:port or socks://host:port. Leave empty to use your device network, system proxy, or VPN. Applies to the shared client used by sources, artwork, and playback; extensions with their own clients may differ.</string>
+    <string name="app_proxy_invalid">Enter http://host:port or socks://host:port without credentials or a path.</string>
+    <string name="app_proxy_restart">Proxy saved. Restart the app to reconnect artwork, extensions, and active playback.</string>
+</resources>
