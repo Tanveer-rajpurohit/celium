@@ -88,6 +88,8 @@ import com.lagradost.cloudstream3.mvvm.observeNullable
 import com.lagradost.cloudstream3.network.initClient
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.plugins.PersonalDefaults
+import com.lagradost.cloudstream3.plugins.PopupGuard
+import com.lagradost.cloudstream3.plugins.PopupType
 import com.lagradost.cloudstream3.plugins.PluginManager.___DO_NOT_CALL_FROM_A_PLUGIN_loadAllOnlinePlugins
 import com.lagradost.cloudstream3.plugins.PluginManager.loadSinglePlugin
 import com.lagradost.cloudstream3.receivers.VideoDownloadRestartReceiver
@@ -669,8 +671,27 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
         }
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        CommonActivity.dispatchKeyEvent(this, event) ?: super.dispatchKeyEvent(event)
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        PopupGuard.onUserInput(android.os.SystemClock.uptimeMillis())
+        return CommonActivity.dispatchKeyEvent(this, event) ?: super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        PopupGuard.onUserInput(android.os.SystemClock.uptimeMillis())
+        return super.dispatchTouchEvent(ev)
+    }
+
+    // Popup gate: external activities/links opened by plugin code (Celium 6, Requirement 2).
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun startActivityForResult(intent: Intent, requestCode: Int, options: Bundle?) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivityForResult(intent, requestCode, options)
+    }
+
+    override fun startActivities(intents: Array<out Intent>, options: Bundle?) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivities(intents, options)
+    }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean =
         CommonActivity.onKeyDown(this, keyCode, event) ?: super.onKeyDown(keyCode, event)
@@ -1183,6 +1204,7 @@ class MainActivity : AppCompatActivity(), ColorPickerDialogListener, BiometricCa
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        PopupGuard.install(this)
         app.initClient(this, ignoreSSL = false)
         @OptIn(UnsafeSSL::class)
         insecureApp.initClient(this, ignoreSSL = true)

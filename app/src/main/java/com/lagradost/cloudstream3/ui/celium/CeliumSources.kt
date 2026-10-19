@@ -6,6 +6,8 @@ import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.utils.Event
 import java.util.Locale
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 
@@ -24,6 +26,22 @@ data class CeliumSource(
     val anime: Boolean = false,
 )
 
+/** Why a catalog source is not ready, keyed by source id. Written by the plugin loader; a successful load clears the entry. */
+object CeliumSourceHealth {
+    const val REPOSITORY_FAILED = "Source list unavailable. Retrying next launch."
+    const val NOT_OFFERED = "Not offered by its repository."
+    const val DOWNLOAD_FAILED = "Download failed. Retrying next launch."
+    const val LOAD_FAILED = "Could not start. Retrying next launch."
+
+    val reasons = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    fun reason(id: String): String? = reasons.value[id]
+
+    fun set(id: String, reason: String) = reasons.update { it + (id to reason) }
+
+    fun clear(id: String) = reasons.update { it - id }
+}
+
 /** Explicit policy: a long source picker must never become an all-provider search. */
 object CeliumSources {
     val ready = Event<Boolean>()
@@ -31,6 +49,7 @@ object CeliumSources {
     const val CXXX = "https://raw.githubusercontent.com/phisher98/CXXX/builds/CXXX.json"
     const val GIZLI = "https://raw.githubusercontent.com/Kraptor123/Cs-GizliKeyif/refs/heads/master/repo.json"
     const val CNC = "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json"
+    const val CSX = "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json"
 
     val all = listOf(
         CeliumSource("multi", "MultiMovies", "MultiMoviesProvider", PHISHER, aliases = setOf("MultiMovies")),
@@ -38,6 +57,11 @@ object CeliumSources {
         CeliumSource("hdmovie2", "HDmovie2", "Hdmovie2", PHISHER),
         CeliumSource("pika", "PikaShow", "PikashowProvider", CNC, aliases = setOf("Pikashow")),
         CeliumSource("netmirror", "NetMirror Mobile", "CNC Verse Mobile", CNC),
+        CeliumSource("movies4u", "Movies4u", "Movies4u", PHISHER),
+        CeliumSource("moviesmod", "Moviesmod", "Moviesmod", CSX),
+        // Anime: AniKoto first, HiAnime second, so the Celium Feed pool starts with them.
+        CeliumSource("anikoto", "AniKoto", "AniKoto", PHISHER, anime = true),
+        CeliumSource("hianime", "HiAnime", "HiAnime", PHISHER, anime = true),
         CeliumSource("anichi", "Anichi", "Anichi", PHISHER, anime = true),
         CeliumSource("animedekho", "AnimeDekho", "AnimeDekhoProvider", PHISHER, anime = true),
         CeliumSource("beeg", "Beeg", "Beeg", GIZLI, true),
@@ -51,7 +75,12 @@ object CeliumSources {
         CeliumSource("xhamster", "Xhamster", "Xhamster", GIZLI, true),
         CeliumSource("xvideos", "Xvideos", "xVideos", GIZLI, true),
         CeliumSource("youperv", "Youperv", "Youperv", GIZLI, true, aliases = setOf("Yourprev")),
-    )
+        CeliumSource("xnxx", "XNXX", "XNXX", CXXX, adult = true),
+    ) // 23 entries
+
+    /** First [limit] candidates, in catalog order, whose id is loaded. The Celium Feed entry is never part of a pool. */
+    fun orderedPool(candidates: List<CeliumSource>, loadedIds: Set<String>, limit: Int = 3): List<CeliumSource> =
+        candidates.asSequence().filter { it.id != "celium" && it.id in loadedIds }.take(limit).toList()
 
     fun enabled(source: CeliumSource): Boolean = getKey<Boolean>("celium_source_enabled_${source.id}") != false
 

@@ -8,6 +8,8 @@ import com.google.android.material.snackbar.Snackbar
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.mvvm.logError
+import com.lagradost.cloudstream3.plugins.PopupGuard
+import com.lagradost.cloudstream3.plugins.PopupType
 import com.lagradost.cloudstream3.utils.UIHelper.colorFromAttribute
 
 object SnackbarHelper {
@@ -23,6 +25,7 @@ object SnackbarHelper {
         actionText: UiText? = null,
         actionCallback: (() -> Unit)? = null
     ) {
+        if (PopupGuard.shouldBlock(PopupType.Snackbar)) return
         if (act == null) return
         showSnackbar(act, message.asString(act), duration,
             actionText?.asString(act), actionCallback)
@@ -36,6 +39,7 @@ object SnackbarHelper {
         @StringRes actionText: Int? = null,
         actionCallback: (() -> Unit)? = null
     ) {
+        if (PopupGuard.shouldBlock(PopupType.Snackbar)) return
         if (act == null) return
         showSnackbar(act, act.getString(message), duration,
             actionText?.let { act.getString(it) }, actionCallback)
@@ -49,6 +53,7 @@ object SnackbarHelper {
         actionText: String? = null,
         actionCallback: (() -> Unit)? = null
     ) {
+        if (PopupGuard.shouldBlock(PopupType.Snackbar)) return
         if (act == null || message == null) {
             Log.w(TAG, "Invalid showSnackbar: act = $act, message = $message")
             return

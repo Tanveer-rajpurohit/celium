@@ -50,6 +50,7 @@ import com.lagradost.cloudstream3.plugins.RepositoryManager.sha256
 import com.lagradost.cloudstream3.ui.settings.extensions.REPOSITORIES_KEY
 import com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData
 import com.lagradost.cloudstream3.ui.celium.CeliumSources
+import com.lagradost.cloudstream3.ui.celium.CeliumSourceHealth
 import com.lagradost.cloudstream3.utils.AppContextUtils.getApiProviderLangSettings
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.Coroutines.main
@@ -289,9 +290,7 @@ object PluginManager {
             CeliumSources.all.any { source -> source.repository == repository.url && CeliumSources.enabled(source) && (!source.adult || settingsForProvider.enableAdult) }
         }
 
-        val onlinePlugins = urls.toList().amap {
-            getRepoPlugins(it) ?: emptyList()
-        }.flatten().distinctBy { it.plugin.url }
+        val onlinePlugins = fetchCeliumRepoPlugins(urls).distinctBy { it.plugin.url }
 
         // Iterates over all offline plugins, compares to remote repo and returns the plugins which are outdated
         val outdatedPlugins = getPluginsOnline().map { savedData ->
@@ -369,9 +368,7 @@ object PluginManager {
             ?: emptyArray()) + PREBUILT_REPOSITORIES).filter { repository ->
             CeliumSources.all.any { source -> source.repository == repository.url && CeliumSources.enabled(source) && (!source.adult || settingsForProvider.enableAdult) }
         }
-        val onlinePlugins = urls.toList().amap {
-            getRepoPlugins(it)?.toList() ?: emptyList()
-        }.flatten().distinctBy { it.plugin.url }
+        val onlinePlugins = fetchCeliumRepoPlugins(urls).distinctBy { it.plugin.url }
 
         val providerLang = activity.getApiProviderLangSettings()
         //Log.i(TAG, "providerLang => ${providerLang.toJson()}")
@@ -457,11 +454,36 @@ object PluginManager {
 
         Log.i(TAG, "Celium prepared ${newDownloadPlugins.size} sources")
 
+        // Downloaded sources that the policy skipped earlier (for example Adult sources while the
+        // toggle was off) are skipped above because their file exists; load them now so they
+        // register without an app restart (Requirement 16.2, 16.4).
+        getPluginsOnline().toList()
+            .filter { data -> synchronized(plugins) { !plugins.containsKey(data.filePath) } }
+            .amap { data -> loadPlugin(activity, File(data.filePath), data) }
+
         // ioSafe {
         afterPluginsLoadedEvent.invoke(false)
         // }
 
         Log.i(TAG, "Plugin download done!")
+        }
+    }
+
+    /** Fetches each repository and records why catalog sources from it cannot be prepared. */
+    private suspend fun fetchCeliumRepoPlugins(urls: List<RepositoryData>): List<PluginWrapper> =
+        urls.amap { repository ->
+            getRepoPlugins(repository).also { recordRepositoryHealth(repository.url, it) } ?: emptyList()
+        }.flatten()
+
+    private fun recordRepositoryHealth(repositoryUrl: String, plugins: List<PluginWrapper>?) {
+        CeliumSources.all.filter { it.repository == repositoryUrl && it.unavailableReason == null }.forEach { source ->
+            when {
+                plugins.isNullOrEmpty() -> CeliumSourceHealth.set(source.id, CeliumSourceHealth.REPOSITORY_FAILED)
+                plugins.none { it.plugin.internalName == source.plugin } -> CeliumSourceHealth.set(source.id, CeliumSourceHealth.NOT_OFFERED)
+                // Listed again: drop only repository-level reasons; download/load reasons clear on success.
+                CeliumSourceHealth.reason(source.id).let { it == CeliumSourceHealth.REPOSITORY_FAILED || it == CeliumSourceHealth.NOT_OFFERED } ->
+                    CeliumSourceHealth.clear(source.id)
+            }
         }
     }
 
@@ -616,14 +638,14 @@ object PluginManager {
      * @return True if successful, false if not
      * */
     private suspend fun loadPlugin(context: Context, file: File, data: PluginData): Boolean {
-        val selected = CeliumSources.all.any { source ->
+        val selected = CeliumSources.all.firstOrNull { source ->
             source.unavailableReason == null && CeliumSources.enabled(source) && (!source.adult || settingsForProvider.enableAdult) && if (data.isOnline) {
                 source.plugin == data.internalName && getPluginPath(context, source.plugin, source.repository).absolutePath == file.absolutePath
             } else {
                 data.internalName.removeSuffix(".cs3").removeSuffix(".zip") == source.plugin
             }
         }
-        if (!selected) {
+        if (selected == null) {
             Log.i(TAG, "Skipping an extension outside the Celium source policy")
             return false
         }
@@ -649,6 +671,7 @@ object PluginManager {
             loader.getResourceAsStream("manifest.json").use { stream ->
                 if (stream == null) {
                     Log.e(TAG, "Failed to load plugin  $fileName: No manifest found")
+                    CeliumSourceHealth.set(selected.id, CeliumSourceHealth.LOAD_FAILED)
                     return false
                 }
                 InputStreamReader(stream).use { reader ->
@@ -674,6 +697,7 @@ object PluginManager {
 
             if (plugins.containsKey(filePath)) {
                 Log.i(TAG, "Plugin with name $name already exists")
+                CeliumSourceHealth.clear(selected.id)
                 return true
             }
 
@@ -699,6 +723,8 @@ object PluginManager {
             synchronized(classLoaders) {
                 classLoaders[loader] = pluginInstance
             }
+            // Popup attribution only; never blocks loading (Celium 6, Requirement 2.3).
+            PluginOrigin.register(loader, data.internalName)
             synchronized(urlPlugins) {
                 urlPlugins[data.url ?: filePath] = pluginInstance
             }
@@ -708,10 +734,14 @@ object PluginManager {
                 pluginInstance.load()
             }
             Log.i(TAG, "Loaded plugin ${data.internalName} successfully")
+            CeliumSourceHealth.clear(selected.id)
             currentlyLoading = null
+            // Plugin_Loaded_Event: providers are registered, so Celium can bind them now (Requirement 16.4).
+            CeliumSources.ready.invoke(false)
             true
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to load $file: ${Log.getStackTraceString(e)}")
+            CeliumSourceHealth.set(selected.id, CeliumSourceHealth.LOAD_FAILED)
             showToast(
                 // context.getActivity(), // we are not always on the main thread
                 context.getString(R.string.plugin_load_fail).format(fileName),
@@ -754,6 +784,9 @@ object PluginManager {
         }
 
         synchronized(classLoaders) {
+            classLoaders.filterValues { v -> v == plugin }.keys.forEach { loader ->
+                PluginOrigin.unregister(loader)
+            }
             classLoaders.values.removeIf { v -> v == plugin }
         }
 
@@ -816,7 +849,9 @@ object PluginManager {
                 ?: return false
             if (!CeliumSources.allowsPlugin(source.repository, internalName)) return false
             // The plugin file needs to be salted with the repository url hash as to allow multiple repositories with the same internal plugin names
-            val newFile = downloadPluginToFile(activity, pluginUrl, file, pluginHash) ?: return false
+            val newFile = downloadPluginToFile(activity, pluginUrl, file, pluginHash)
+                ?: return false.also { CeliumSourceHealth.set(source.id, CeliumSourceHealth.DOWNLOAD_FAILED) }
+            if (CeliumSourceHealth.reason(source.id) == CeliumSourceHealth.DOWNLOAD_FAILED) CeliumSourceHealth.clear(source.id)
 
             val data = PluginData(
                 internalName,
@@ -878,9 +913,7 @@ object PluginManager {
             ?: emptyArray()) + PREBUILT_REPOSITORIES).filter { repository ->
             CeliumSources.all.any { source -> source.repository == repository.url && CeliumSources.enabled(source) && (!source.adult || settingsForProvider.enableAdult) }
         }
-        val onlinePlugins = urls.toList().amap {
-            getRepoPlugins(it) ?: emptyList()
-        }.flatten().distinctBy { it.plugin.url }
+        val onlinePlugins = fetchCeliumRepoPlugins(urls).distinctBy { it.plugin.url }
 
         val allPlugins = getPluginsOnline().flatMap { savedData ->
             onlinePlugins

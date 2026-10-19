@@ -6,6 +6,7 @@ import androidx.core.content.ContextCompat
 import com.lagradost.cloudstream3.CloudStreamApp
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKeys
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.removeKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.removeKeys
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.MainActivity.Companion.lastError
@@ -16,6 +17,7 @@ import com.lagradost.cloudstream3.services.DownloadQueueService.Companion.downlo
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.downloader.DownloadObjects.DownloadQueueWrapper
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.KEY_RESUME_IN_QUEUE
+import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.KEY_RESUME_PACKAGES
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.downloadStatus
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.downloadStatusEvent
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.getDownloadFileInfo
@@ -41,7 +43,10 @@ object DownloadQueueManager {
      */
     private val _queue: MutableStateFlow<Array<DownloadQueueWrapper>> by lazy {
         /** Persistent queue */
-        val currentValue = getKey<Array<DownloadQueueWrapper>>(QUEUE_KEY) ?: emptyArray()
+        // A corrupt persisted queue must never crash startup (Requirement 7.7)
+        val currentValue = runCatching {
+            getKey<Array<DownloadQueueWrapper>>(QUEUE_KEY)
+        }.getOrNull() ?: emptyArray()
         MutableStateFlow(currentValue)
     }
 
@@ -65,32 +70,67 @@ object DownloadQueueManager {
                 return@startQueue
             }
 
-            val resumeQueue =
-                getPreResumeIds().filterNot {
-                    VideoDownloadManager.currentDownloads.value.contains(it)
-                }
-                    .mapNotNull { id ->
-                        getDownloadResumePackage(context, id)?.toWrapper()
-                            ?: getDownloadQueuePackage(context, id)
-                    }
+            val active = VideoDownloadManager.currentDownloads.value.toSet()
 
-            val newQueue = _queue.updateAndGet { localQueue ->
-                // Add resume packages to the first part of the queue, since they may have been removed from the queue when they started
-                (resumeQueue + localQueue).distinctBy { it.id }.toTypedArray()
+            // Each resume id becomes a candidate; unrestorable entries get a null wrapper (Requirement 7.7)
+            val resumeCandidates = getPreResumeIds().map { id ->
+                val wrapper = runCatching {
+                    getDownloadResumePackage(context, id)?.toWrapper()
+                        ?: getDownloadQueuePackage(context, id)
+                }.getOrNull()
+                RestoreCandidate(id, wrapper, isDownloadComplete(context, id))
             }
+
+            // Re-validate the persisted queue, completed entries are dropped
+            val queuedComplete = _queue.value.associate { wrapper ->
+                wrapper.id to isDownloadComplete(context, wrapper.id)
+            }
+
+            var restored: List<DownloadQueueWrapper> = emptyList()
+            _queue.update { localQueue ->
+                val queuedCandidates = localQueue.map { wrapper ->
+                    // Items added after the snapshot were already validated by addToQueue
+                    RestoreCandidate(wrapper.id, wrapper, queuedComplete[wrapper.id] ?: false)
+                }
+                val planned = DownloadRestore.plan(resumeCandidates, queuedCandidates, active)
+                // Items currently downloading stay out of the queue, as before
+                restored = planned
+                planned.toTypedArray()
+            }
+
+            val restoredIds = restored.mapTo(HashSet()) { it.id }
+            val droppedIds = (resumeCandidates.map { it.id } + queuedComplete.keys)
+                .filter { it !in restoredIds && it !in active }
+                .toSet()
 
             // Once added to the queue they can be safely removed
             removeKeys(KEY_RESUME_IN_QUEUE)
 
+            // Discarded entries must not resume later and should not look pending
+            droppedIds.forEach { id ->
+                safe { removeKey(KEY_RESUME_PACKAGES, id.toString()) }
+                setQueueStatus(id, VideoDownloadManager.DownloadType.IsStopped)
+            }
+
             // Make sure the download buttons display a pending status
-            newQueue.forEach { obj ->
+            restored.forEach { obj ->
                 setQueueStatus(obj.id, VideoDownloadManager.DownloadType.IsPending)
             }
 
-            if (newQueue.any()) {
+            // Only start the foreground service for real work (Requirements 7.1, 7.2)
+            if (DownloadRestore.shouldStartService(restored)) {
                 startQueueService(context)
             }
         }
+    }
+
+    /** True when more than 98% of the file is on disk. Shared by restore and [addToQueue]. */
+    private fun isDownloadComplete(context: Context, id: Int): Boolean {
+        val fileInfo = runCatching { getDownloadFileInfo(context, id) }.getOrNull()
+        return fileInfo != null &&
+                // Assure no division by 0
+                fileInfo.totalBytes > 0 &&
+                (fileInfo.fileLength.toFloat() / fileInfo.totalBytes.toFloat()) > 0.98f
     }
 
     /** Downloads not yet started or in progress. */
@@ -224,15 +264,11 @@ object DownloadQueueManager {
     /** Add a new object to the queue. Will not queue completed downloads or current downloads. */
     fun addToQueue(downloadQueueWrapper: DownloadQueueWrapper) = safe {
         val context = CloudStreamApp.context ?: return@safe
-        val fileInfo = getDownloadFileInfo(context, downloadQueueWrapper.id)
-        val isComplete = fileInfo != null &&
-                // Assure no division by 0
-                fileInfo.totalBytes > 0 &&
-                // If more than 98% downloaded then do not add to queue
-                (fileInfo.fileLength.toFloat() / fileInfo.totalBytes.toFloat()) > 0.98f
         // Do not queue completed files!
-        if (isComplete) return@safe
+        if (isDownloadComplete(context, downloadQueueWrapper.id)) return@safe
 
+        // List the item as Queued before link extraction starts (Requirement 19.1).
+        com.lagradost.cloudstream3.ui.celium.CeliumDownloads.record(downloadQueueWrapper)
         if (add(downloadQueueWrapper)) {
             setQueueStatus(downloadQueueWrapper.id, VideoDownloadManager.DownloadType.IsPending)
             startQueueService(context)

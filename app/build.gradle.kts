@@ -106,8 +106,8 @@ android {
         applicationId = "app.celium.android"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 69
-        versionName = "5.0.0-celium"
+        versionCode = 70
+        versionName = "6.0.0-celium"
 
         manifestPlaceholders["target_sdk_version"] = libs.versions.targetSdk.get()
 
@@ -218,6 +218,7 @@ dependencies {
     // Testing
     testImplementation(libs.junit)
     testImplementation(libs.json)
+    testImplementation(libs.kotest.property)
     androidTestImplementation(libs.core)
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.ext.junit)

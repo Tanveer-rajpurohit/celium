@@ -813,4 +813,14 @@
         <item quantity="other">%d downloads queued</item>
     </plurals>
     <string name="player_is_live">Live</string>
+    <string name="celium_no_links_for_source" formatted="true">%s found no playable links for this title</string>
+    <string name="celium_no_playable_link">No playable link found.</string>
+    <string name="celium_trying_link" formatted="true">Trying %s</string>
+    <string name="celium_retry">Retry</string>
+    <string name="celium_link_failed">failed</string>
+    <string name="celium_player_download">Download</string>
+    <string name="celium_episode_not_downloadable">This episode cannot be downloaded.</string>
+    <string name="celium_playing_link_not_downloadable">The playing link cannot be downloaded.</string>
+    <string name="celium_download_quality">Download quality</string>
+    <string name="celium_confirm">Confirm</string>
 </resources>

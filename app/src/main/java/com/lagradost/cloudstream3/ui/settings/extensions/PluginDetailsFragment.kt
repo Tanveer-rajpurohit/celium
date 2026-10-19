@@ -8,6 +8,9 @@ import androidx.core.view.isVisible
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.openBrowser
 import com.lagradost.cloudstream3.databinding.FragmentPluginDetailsBinding
 import com.lagradost.cloudstream3.plugins.PluginManager
+import com.lagradost.cloudstream3.plugins.FrameOrigin
+import com.lagradost.cloudstream3.plugins.PluginOrigin
+import com.lagradost.cloudstream3.plugins.PopupGuard
 import com.lagradost.cloudstream3.plugins.VotingApi.canVote
 import com.lagradost.cloudstream3.plugins.VotingApi.getVotes
 import com.lagradost.cloudstream3.plugins.VotingApi.hasVoted
@@ -101,7 +104,11 @@ class PluginDetailsFragment(val data: PluginViewData) : BaseBottomSheetDialogFra
                     actionSettings.isVisible = true
                     actionSettings.setOnClickListener {
                         try {
-                            plugin.openSettings!!.invoke(requireContext())
+                            val pluginName = (PluginOrigin.ofClass(plugin.javaClass) as? FrameOrigin.Plugin)?.name
+                                ?: metadata.internalName
+                            PopupGuard.userAction(pluginName) {
+                                plugin.openSettings!!.invoke(requireContext())
+                            }
                         } catch (e: Throwable) {
                             Log.e(
                                 "PluginAdapter",

@@ -26,6 +26,9 @@ import androidx.fragment.app.activityViewModels
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import com.lagradost.cloudstream3.plugins.PluginManager
+import com.lagradost.cloudstream3.plugins.FrameOrigin
+import com.lagradost.cloudstream3.plugins.PluginOrigin
+import com.lagradost.cloudstream3.plugins.PopupGuard
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getActivity
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -456,7 +459,10 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                             settingsIcon.setOnClickListener {
                                 try {
                                     val activityContext = it.context.getActivity() ?: it.context
-                                    pluginInstance.openSettings?.invoke(activityContext)
+                                    val pluginName = (PluginOrigin.ofClass(pluginInstance.javaClass) as? FrameOrigin.Plugin)?.name ?: ""
+                                    PopupGuard.userAction(pluginName) {
+                                        pluginInstance.openSettings?.invoke(activityContext)
+                                    }
                                 } catch (e: Throwable) {
                                     logError(e)
                                 }
@@ -723,7 +729,10 @@ class HomeFragment : BaseFragment<FragmentHomeBinding>(
                 if (openSettings != null) {
                     try {
                         val activityContext = view.context.getActivity() ?: view.context
-                        openSettings.invoke(activityContext)
+                        val pluginName = (plugin?.let { PluginOrigin.ofClass(it.javaClass) } as? FrameOrigin.Plugin)?.name ?: ""
+                        PopupGuard.userAction(pluginName) {
+                            openSettings.invoke(activityContext)
+                        }
                     } catch (e: Throwable) {
                         logError(e)
                     }

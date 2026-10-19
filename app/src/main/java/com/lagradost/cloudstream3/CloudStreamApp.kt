@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
@@ -17,6 +18,8 @@ import com.lagradost.cloudstream3.BuildConfig
 import com.lagradost.cloudstream3.mvvm.safe
 import com.lagradost.cloudstream3.mvvm.safeAsync
 import com.lagradost.cloudstream3.plugins.PluginManager
+import com.lagradost.cloudstream3.plugins.PopupGuard
+import com.lagradost.cloudstream3.plugins.PopupType
 import com.lagradost.cloudstream3.ui.settings.Globals.EMULATOR
 import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
@@ -84,6 +87,28 @@ class CloudStreamApp : Application(), SingletonImageLoader.Factory {
         }
 
         AppDebug.isDebug = BuildConfig.DEBUG
+    }
+
+    // Popup gates: external activities opened by plugin code via the application context
+    // (Celium 6, Requirement 2). Celium's own calls are attributed to the app and pass through.
+    override fun startActivity(intent: Intent) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivity(intent)
+    }
+
+    override fun startActivity(intent: Intent, options: Bundle?) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivity(intent, options)
+    }
+
+    override fun startActivities(intents: Array<out Intent>) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivities(intents)
+    }
+
+    override fun startActivities(intents: Array<out Intent>, options: Bundle?) {
+        if (PopupGuard.shouldBlock(PopupType.ExternalLink)) return
+        super.startActivities(intents, options)
     }
 
     override fun attachBaseContext(base: Context?) {

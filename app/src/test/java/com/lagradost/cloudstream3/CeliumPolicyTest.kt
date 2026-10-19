@@ -47,6 +47,19 @@ class CeliumPolicyTest {
     }
 
     @Test
+    fun `catalog lists AniKoto and HiAnime first and the anime pool keeps catalog order`() {
+        assertEquals(23, CeliumSources.all.size)
+        val anime = CeliumSources.choices(CeliumSection.Anime)
+        assertEquals(listOf("celium", "anikoto", "hianime", "anichi", "animedekho"), anime.map { it.id })
+        assertEquals(listOf("anikoto", "hianime", "anichi"),
+            CeliumSources.orderedPool(anime, setOf("animedekho", "anichi", "hianime", "anikoto")).map { it.id })
+        assertEquals(listOf("hianime", "anichi", "animedekho"),
+            CeliumSources.orderedPool(anime, setOf("animedekho", "anichi", "hianime")).map { it.id })
+        assertTrue(CeliumSources.allowsPlugin(CeliumSources.CSX, "Moviesmod"))
+        assertTrue(CeliumSources.allowsPlugin(CeliumSources.CXXX, "XNXX"))
+    }
+
+    @Test
     fun `defaults and invalid saved preferences resolve inside their own section`() {
         assertEquals("celium", CeliumSources.selected(CeliumSection.Movies, null).id)
         assertEquals("celium", CeliumSources.selected(CeliumSection.Adult, "multi").id)

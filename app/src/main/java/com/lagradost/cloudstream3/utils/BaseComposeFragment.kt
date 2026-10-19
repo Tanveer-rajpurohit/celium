@@ -21,7 +21,10 @@ abstract class BaseComposeFragment : Fragment(), Screen {
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View = createComposeView(inflater, container, savedInstanceState)
+    ): View = createComposeView(inflater, container, savedInstanceState).apply {
+        // Stable id so view state and tests can locate the Compose root
+        id = R.id.celium_compose_root
+    }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)

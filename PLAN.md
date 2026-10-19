@@ -1,23 +1,22 @@
-# Celium 5: current implementation and remaining verification
-Updated 18 October 2026. This file supersedes the earlier adult-on, home-only redesign plan.
+# Celium 6: current implementation and remaining verification
+Updated 18 October 2026. Version 6.0.0-celium (70).
 
 ## Implemented
-Neutral light/dark themes, offline DM Sans, optional readable custom accent, compact browsing and dedicated search, app-owned Celium Feed, individual provider collections with additional sections, responsive details, seasons and episode actions, saved/history management, download management and source settings.
+Celium 5 base: neutral themes, offline DM Sans, Celium Feed, provider collections, responsive details, saved/history, downloads and source settings on the existing adapter, extractor, transfer and playback engines.
 
-The existing Android adapter, extractor, transfer and playback engines remain. Player controls are refined; decorative paused metadata and guessed opening skip are removed from the visible flow. Onboarding routes and the old Home customization/install controls are removed.
+Celium 6: Light default, accent colour picker, plugin popup guard, infinite scroll, quick-return header, random button, details selectors/recommendations/icon back/header image, live source switching, link fallback with highest quality first, player download button, visible download queue, no phantom download notification.
 
-Adult defaults OFF with a one-time migration. AnimePahe and Porn36 are excluded from the selected source policy. Source loading/download/update gates respect the policy.
+Source catalogue: 23 sources. Added AniKoto, HiAnime, Movies4u (Phisher), Moviesmod (CSX repo, https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json) and XNXX (CXXX, adult). Adult defaults OFF. AnimePahe and Porn36 stay excluded.
 
-Windows support is a starter for the same APK in a configured Android emulator, not a native Windows extension runtime.
+Windows support is a starter for the same APK in a configured Android emulator.
 
 ## Continue from here
-1. Read [implementation map](docs/CELIUM_5_CHANGES.md), [research](docs/CELIUM_5_RESEARCH.md) and the latest VERIFICATION.md.
-2. Install the new APK on a real phone/emulator. Verify every main route, large text, rotation and back behavior. Capture screenshots; no visual-device approval has been established by compilation.
-3. Exercise movie, multi-season show, anime and opt-in adult source flows with authorized test items. Check subtitles, quality/audio selection, resume and download pause/retry/delete.
-4. Measure scrolling frame timing, startup, first useful shelf and search latency on a named device/network. Do not call this lag-free without measurements.
-5. Audit richer source capabilities and provider-specific search failures. MultiMovies adapter source was not present in the reviewed public master tree; do not claim an unperformed binary patch.
-6. Test the Windows starter with a real configured AVD. Check cold boot, repeat launch, path spaces, multiple devices and data-preserving updates.
-7. Only remove further inherited runtime classes after reference analysis and compatibility tests. Some legacy dialogs/resources remain intentionally; no blind deletion.
+1. Read VERIFICATION.md; fill in Celium 6 build results after the final build.
+2. Install the APK on a real phone/emulator. Check every route, Light/Dark, accent, large text, rotation and back behavior.
+3. Exercise movie, show, anime and opt-in adult flows, including the five new sources, source switching, fallback, subtitles, quality and downloads.
+4. Measure scrolling, startup and search latency on a named device. Do not call it lag-free without measurements.
+5. Test the Windows starter with a real AVD.
+6. Remove further inherited classes only after reference analysis and compatibility tests.
 
 ## Invariants
-Do not restore adult-on defaults, AnimePahe startup loading, repository installation UI or all-source search. Preserve original provider URLs/headers and separate content metadata from playable availability. Keep work in this celium source folder; the Downloads copy is reference only.
+Do not restore adult-on defaults, AnimePahe/Porn36, repository installation UI or all-source search. Preserve provider URLs/headers. Keep work in this celium folder.

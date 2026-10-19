@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Font
 import com.lagradost.cloudstream3.R
@@ -19,43 +18,42 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /** Preferences shared by every consumer screen, independent of the extension runtime. */
 object CeliumStyle {
-    val mode = MutableStateFlow(getKey<String>("celium_theme_v2") ?: "Dark")
+    const val DEFAULT_MODE = "Light"
+    val MODES = listOf("Dark", "Light", "System")
+
+    /** Pure: a missing or unknown saved mode renders as [DEFAULT_MODE]. The stored value is not rewritten. */
+    fun normalizeMode(saved: String?): String = saved?.takeIf { it in MODES } ?: DEFAULT_MODE
+
+    val mode = MutableStateFlow(normalizeMode(getKey<String>("celium_theme_v2")))
     val accent = MutableStateFlow(getKey<String>("celium_accent_v2") ?: "")
     fun mode(value: String) {
-        if (value !in listOf("Dark", "Light", "System")) return
+        if (value !in MODES) return
         mode.value = value
         setKey("celium_theme_v2", value)
     }
+    /** Stores an empty value (neutral) or exactly 6 hex digits with an optional '#'. Returns false and stores nothing otherwise. */
     fun accent(value: String): Boolean {
-        val safe = value.trim().removePrefix("#")
-        if (safe.isNotEmpty() && !safe.matches(Regex("[0-9a-fA-F]{6}"))) return false
+        val trimmed = value.trim()
+        val safe = if (trimmed.isEmpty()) "" else CeliumColor.parseHex(trimmed)?.let(CeliumColor::formatHex) ?: return false
         accent.value = safe
         setKey("celium_accent_v2", safe)
         return true
     }
 }
 
+/** CeliumColor returns 24-bit 0xRRGGBB; add opaque alpha for Compose. */
+internal fun opaque(rgb: Int): Color = Color(0xFF000000.toInt() or (rgb and 0xFFFFFF))
+
 @Composable
 fun CeliumTheme(content: @Composable () -> Unit) {
     val mode by CeliumStyle.mode.collectAsState()
     val custom by CeliumStyle.accent.collectAsState()
     val dark = mode == "Dark" || (mode == "System" && isSystemInDarkTheme())
-    val requested = custom.toLongOrNull(16)?.let { Color(0xFF000000 or it) }
-        ?: if (dark) Color(0xFFF5F5F5) else Color(0xFF242424)
-    val canvas = if (dark) 0xFF0C0C0C.toInt() else 0xFFFAFAFA.toInt()
-    val primary = androidx.compose.runtime.remember(requested, dark) {
-        val original = requested.toArgb()
-        var safe = original
-        var step = 0
-        while (androidx.core.graphics.ColorUtils.calculateContrast(safe, canvas) < 4.5 && step < 20) {
-            step++
-            safe = androidx.core.graphics.ColorUtils.blendARGB(original, if (dark) android.graphics.Color.WHITE else android.graphics.Color.BLACK, step / 20f)
-        }
-        Color(safe)
-    }
+    // Saved accent (or the mode's neutral), passed through the 4.5:1 contrast guard.
+    val accentRgb = androidx.compose.runtime.remember(custom, dark) { CeliumColor.effectiveAccent(custom, dark) }
+    val primary = opaque(accentRgb)
     // Choose the foreground by luminance, including arbitrary user-selected accents.
-    val luminance = androidx.core.graphics.ColorUtils.calculateLuminance(primary.toArgb())
-    val foreground = if (luminance > 0.179) Color.Black else Color.White
+    val foreground = opaque(CeliumColor.foregroundFor(accentRgb))
     val colors = if (dark) darkColorScheme(
         primary = primary, onPrimary = foreground,
         secondary = primary, onSecondary = foreground,

@@ -1,7 +1,7 @@
 {
   "checkedOn": "2026-10-18",
   "scope": "SHA-256 and extension ZIP manifest/classes.dex inspection; packages not executed. This does not verify source websites or playback.",
-  "note": "Carried-forward package/digest inspection of the 18 retained artifacts; AnimePahe excluded from this version. Not a website or playback verification.",
+  "note": "23 selected artifacts. The 18 carried-forward entries keep their earlier package/digest inspection. The 5 Celium 6 additions (AniKoto, HiAnime, Movies4u, Moviesmod from the CSX repository, XNXX) record versions and digests from live repo json on 2026-10-18; their packages were not downloaded or inspected here. AnimePahe and Porn36 excluded. Not a website or playback verification.",
   "artifacts": [
     {
       "internalName": "MultiMoviesProvider",
@@ -200,6 +200,56 @@
       "pluginClass": "com.horis.cncverse.CNCVersePlugin",
       "bytes": 97614,
       "error": null
+    },
+    {
+      "internalName": "AniKoto",
+      "version": 6,
+      "expectedVersion": 6,
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "expectedSha256": "d9e69451709aa0386b1c99148239bf8e32c827e5fc4d603ef71095c889719e20",
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "Package not inspected; digest taken from live repo json"
+    },
+    {
+      "internalName": "HiAnime",
+      "version": 2,
+      "expectedVersion": 2,
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "expectedSha256": "82e56188b75c022731975a2c1118842e8ad8f3bab4a5a31c0617e3b67fd96fe9",
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "Package not inspected; digest taken from live repo json"
+    },
+    {
+      "internalName": "Movies4u",
+      "version": 18,
+      "expectedVersion": 18,
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "expectedSha256": "cb3dff6df9912334b6230918b88cb3b2730e3b1f56bb5657c18a01bf8a3fc44a",
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "Package not inspected; digest taken from live repo json"
+    },
+    {
+      "internalName": "Moviesmod",
+      "version": 33,
+      "expectedVersion": 33,
+      "repository": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+      "expectedSha256": "9433fd970480a53f52f3ec4b49d3213c7bda5a26b109dc80ef82cd2ec13a37a7",
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "Package not inspected; digest taken from live repo json"
+    },
+    {
+      "internalName": "XNXX",
+      "version": 2,
+      "expectedVersion": 2,
+      "repository": "https://raw.githubusercontent.com/phisher98/CXXX/builds/CXXX.json",
+      "expectedSha256": "b9746205a3917b18c60e3df5e0d428ea9bb646fe0a27322f381736be370f28df",
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "Package not inspected; digest taken from live repo json"
     }
   ]
 }

@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.PendingIntentCompat
+import androidx.core.app.ServiceCompat
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.removeKey
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.MainActivity.Companion.lastError
@@ -32,6 +33,7 @@ import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.KEY_RESU
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.downloadEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -152,6 +154,8 @@ class DownloadQueueService : Service() {
             DOWNLOAD_QUEUE_CHANNEL_NAME,
             DOWNLOAD_QUEUE_CHANNEL_DESCRIPTION
         )
+        // A service started with startForegroundService must call startForeground,
+        // even when it stops right away, to avoid ForegroundServiceDidNotStartInTimeException.
         if (SDK_INT >= 29) {
             startForeground(
                 DOWNLOAD_QUEUE_NOTIFICATION_ID,
@@ -160,6 +164,15 @@ class DownloadQueueService : Service() {
             )
         } else {
             startForeground(DOWNLOAD_QUEUE_NOTIFICATION_ID, baseNotification.build())
+        }
+
+        // Restarted or started with nothing to do: remove the notification and stop at once (Requirement 7.3)
+        if (!hasWork()) {
+            Log.d(TAG, "No download work, stopping the queue service.")
+            // Allow a new user download to start the service again right away (Requirement 7.6)
+            isRunning = false
+            stopWithoutNotification()
+            return
         }
 
         downloadEvent += downloadEventListener
@@ -247,14 +260,37 @@ class DownloadQueueService : Service() {
                 }
         }
 
-        // Stop self regardless of job outcome
+        this.queueJob = queueJob
+
+        // Stop self regardless of job outcome, and remove the ongoing notification (Requirement 7.4)
         queueJob.invokeOnCompletion { throwable ->
             if (throwable != null) {
                 logError(throwable)
             }
-            safe {
-                stopSelf()
-            }
+            stopWithoutNotification()
+        }
+    }
+
+    /** The active queue job, null when the service stopped without work. */
+    @Volatile
+    private var queueJob: Job? = null
+
+    /** True when there is a queued, active, or running download. */
+    private fun hasWork(): Boolean =
+        DownloadQueueManager.queue.value.isNotEmpty() ||
+                downloadInstances.value.isNotEmpty() ||
+                VideoDownloadManager.currentDownloads.value.isNotEmpty()
+
+    /** Removes the foreground notification and stops the service. */
+    private fun stopWithoutNotification() {
+        safe {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+        safe {
+            NotificationManagerCompat.from(this).cancel(DOWNLOAD_QUEUE_NOTIFICATION_ID)
+        }
+        safe {
+            stopSelf()
         }
     }
 
@@ -266,7 +302,12 @@ class DownloadQueueService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY // We want the service restarted if its killed
+        // Repeated start with nothing to do and no running queue job: stop at once (Requirement 7.3)
+        if (queueJob?.isActive != true && !hasWork()) {
+            stopWithoutNotification()
+        }
+        // Do not let the system restart an idle service; MainActivity restores real work on launch
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

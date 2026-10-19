@@ -1,6 +1,6 @@
 {
   "reviewedOn": "2026-10-18",
-  "note": "18 selected legacy artifacts. AnimePahe and Porn36 excluded. Adult disabled by default; live playback not verified. Celium Feed is an app-owned coordinator, not an extra binary.",
+  "note": "23 selected legacy artifacts (Celium 6 added AniKoto, HiAnime, Movies4u, Moviesmod from the CSX repository, and XNXX; entries from live repo json on 2026-10-18). AnimePahe and Porn36 excluded. Adult disabled by default; live playback not verified. Celium Feed is an app-owned coordinator, not an extra binary.",
   "artifacts": [
     {
       "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
@@ -33,6 +33,54 @@
       "status": 1,
       "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/Hdmovie2.cs3",
       "fileHash": "sha256-a0d3ebf3531162f5cc89fdc13e1ae4e8fa9886878d2e7645d64a692dcd635ed6",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "Movies4u",
+      "version": 18,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/Movies4u.cs3",
+      "fileHash": "sha256-cb3dff6df9912334b6230918b88cb3b2730e3b1f56bb5657c18a01bf8a3fc44a",
+      "authors": [
+        "Phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+      "internalName": "Moviesmod",
+      "version": 33,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/Moviesmod.cs3",
+      "fileHash": "sha256-9433fd970480a53f52f3ec4b49d3213c7bda5a26b109dc80ef82cd2ec13a37a7",
+      "authors": [
+        "megix"
+      ],
+      "sourceRepository": "https://github.com/SaurabhKaperwan/CSX"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "AniKoto",
+      "version": 6,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/AniKoto.cs3",
+      "fileHash": "sha256-d9e69451709aa0386b1c99148239bf8e32c827e5fc4d603ef71095c889719e20",
+      "authors": [
+        "phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/cloudstream-extensions-phisher"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
+      "internalName": "HiAnime",
+      "version": 2,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/builds/HiAnime.cs3",
+      "fileHash": "sha256-82e56188b75c022731975a2c1118842e8ad8f3bab4a5a31c0617e3b67fd96fe9",
       "authors": [
         "Phisher98"
       ],
@@ -198,6 +246,18 @@
         "keyiflerolsun",
         "ramio23",
         "phisher98"
+      ],
+      "sourceRepository": "https://github.com/phisher98/CXXX"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/phisher98/CXXX/builds/CXXX.json",
+      "internalName": "XNXX",
+      "version": 2,
+      "status": 1,
+      "url": "https://raw.githubusercontent.com/phisher98/CXXX/builds/XNXX.cs3",
+      "fileHash": "sha256-b9746205a3917b18c60e3df5e0d428ea9bb646fe0a27322f381736be370f28df",
+      "authors": [
+        "SIX"
       ],
       "sourceRepository": "https://github.com/phisher98/CXXX"
     },

@@ -2,6 +2,8 @@
 
 Historical notes for the prior Cloudstream fork. For Celium's current behavior and build, use README.md, CELIUM_BUILD.md and CELIUM_STATUS.md instead.
 
+Current Celium is 6.0.0-celium (70) with 23 curated sources (including AniKoto, HiAnime, Movies4u, Moviesmod and XNXX) from the Phisher, CXXX, GizliKeyif, CNCVerse and CSX repositories. Adult defaults OFF and repository setup is not exposed; the seeding, adult-on and build details below no longer apply.
+
 This version is based on recloudstream/cloudstream. The upstream GPL-3.0 license and attribution remain in this source tree.
 
 Base revision: `4c4c6796ff6a972e8f1339675b349e8c53194577`.

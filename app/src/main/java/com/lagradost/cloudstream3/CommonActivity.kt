@@ -38,6 +38,8 @@ import com.lagradost.cloudstream3.actions.OpenInAppAction
 import com.lagradost.cloudstream3.actions.VideoClickActionHolder
 import com.lagradost.cloudstream3.databinding.ToastBinding
 import com.lagradost.cloudstream3.mvvm.logError
+import com.lagradost.cloudstream3.plugins.PopupGuard
+import com.lagradost.cloudstream3.plugins.PopupType
 import com.lagradost.cloudstream3.syncproviders.AccountManager
 import com.lagradost.cloudstream3.ui.home.HomeChildItemAdapter
 import com.lagradost.cloudstream3.ui.home.ParentItemAdapter
@@ -123,7 +125,9 @@ object CommonActivity {
 
     private var currentToast: Toast? = null
 
+    // Popup gates (Celium 6, Requirement 2): checked on the calling thread before runOnUiThread.
     fun showToast(@StringRes message: Int, duration: Int? = null) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         val act = activity ?: return
         act.runOnUiThread {
             showToast(act, act.getString(message), duration)
@@ -131,6 +135,7 @@ object CommonActivity {
     }
 
     fun showToast(message: String?, duration: Int? = null) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         val act = activity ?: return
         act.runOnUiThread {
             showToast(act, message, duration)
@@ -138,6 +143,7 @@ object CommonActivity {
     }
 
     fun showToast(message: UiText?, duration: Int? = null) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         val act = activity ?: return
         if (message == null) return
         act.runOnUiThread {
@@ -148,6 +154,7 @@ object CommonActivity {
 
     @MainThread
     fun showToast(act: Activity?, text: UiText, duration: Int) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         if (act == null) return
         text.asStringNull(act)?.let {
             showToast(act, it, duration)
@@ -157,6 +164,7 @@ object CommonActivity {
     /** duration is Toast.LENGTH_SHORT if null*/
     @MainThread
     fun showToast(act: Activity?, @StringRes message: Int, duration: Int? = null) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         if (act == null) return
         showToast(act, act.getString(message), duration)
     }
@@ -166,6 +174,7 @@ object CommonActivity {
     /** duration is Toast.LENGTH_SHORT if null*/
     @MainThread
     fun showToast(act: Activity?, message: String?, duration: Int? = null) {
+        if (PopupGuard.shouldBlock(PopupType.Toast)) return
         if (act == null || message == null) {
             Log.w(TAG, "invalid showToast act = $act message = $message")
             return

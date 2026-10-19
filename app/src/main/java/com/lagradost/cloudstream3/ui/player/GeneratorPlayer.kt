@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.MainThread
+import androidx.appcompat.app.AlertDialog
 import androidx.annotation.OptIn
 import androidx.core.animation.addListener
 import androidx.core.app.NotificationCompat
@@ -34,6 +35,7 @@ import androidx.core.text.toSpanned
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Format.NO_VALUE
 import androidx.media3.common.MimeTypes
@@ -52,6 +54,7 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.LoadResponse.Companion.getAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.isMovie
 import com.lagradost.cloudstream3.LoadResponse.Companion.getImdbId
 import com.lagradost.cloudstream3.LoadResponse.Companion.getMalId
 import com.lagradost.cloudstream3.LoadResponse.Companion.getTMDbId
@@ -122,6 +125,10 @@ import com.lagradost.cloudstream3.utils.UIHelper.dismissSafe
 import com.lagradost.cloudstream3.utils.UIHelper.fixSystemBarsPadding
 import com.lagradost.cloudstream3.utils.UIHelper.hideProgress
 import com.lagradost.cloudstream3.utils.UIHelper.hideSystemUI
+import com.lagradost.cloudstream3.utils.UIHelper.navigate
+import com.lagradost.cloudstream3.utils.downloader.DownloadObjects
+import com.lagradost.cloudstream3.utils.downloader.DownloadQueueManager
+import com.lagradost.cloudstream3.ui.result.getId
 import com.lagradost.cloudstream3.utils.UIHelper.popCurrentPage
 import com.lagradost.cloudstream3.utils.UIHelper.showProgress
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
@@ -139,6 +146,7 @@ import java.lang.ref.WeakReference
 import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(UnstableApi::class)
@@ -231,6 +239,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (tracks.allAudioTracks.any { it.language == preferredAudioTrackLanguage }) {
             player.setPreferredAudioTrack(preferredAudioTrackLanguage)
         }
+        safe { forceHighestHlsTrack(tracks) }
         updatePlayerInfo()
     }
 
@@ -497,11 +506,18 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    private fun loadLink(link: VideoLink?, sameEpisode: Boolean) {
+    /**
+     * @param resumeAt when set, playback starts at this position (link fallback, manual
+     * source pick and retry keep the position the previous link reached, Requirement 17.3/17.5/17.8).
+     */
+    private fun loadLink(link: VideoLink?, sameEpisode: Boolean, resumeAt: Long? = null) {
         if (link == null) return
         isPlayerActive.set(true)
         // manage UI
         binding?.playerLoadingOverlay?.isVisible = false
+        binding?.playerNoLinksHolder?.isVisible = false
+        // A different link gets the HLS highest-bitrate override again (Requirement 18.1)
+        if (link != currentSelectedLink) forcedHighestFor = null
         val isTorrent =
             link.first?.type == ExtractorLinkType.MAGNET || link.first?.type == ExtractorLinkType.TORRENT
 
@@ -516,6 +532,7 @@ class GeneratorPlayer : FullScreenPlayer() {
         // uiReset() // Removed due to UX
 
         currentSelectedLink = link
+        updateDownloadButton()
         //  setEpisodes(viewModel.getAllMeta() ?: emptyList())
         setPlayerDimen(null)
         setTitle()
@@ -532,7 +549,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                 sameEpisode,
                 url,
                 uri,
-                startPosition = if (sameEpisode) null else {
+                startPosition = resumeAt ?: if (sameEpisode) null else {
                     if (isNextEpisode) 0L else getPos()
                 },
                 subtitles,
@@ -548,6 +565,182 @@ class GeneratorPlayer : FullScreenPlayer() {
             // Resets subtitle delay, as we watch some other content
             player.setSubtitleOffset(0)
         }
+
+        // Torrents buffer for long and local files cannot time out, so only online links are watched.
+        if (link.first != null && !isTorrent) startFirstFrameWatchdog() else cancelFirstFrameWatchdog()
+    }
+
+    // ---- Celium link fallback (Requirement 17) and highest quality (Requirement 18.1) ----
+
+    /** Fallback state of the current playback attempt; null before the first link is started. */
+    private var linkAttempt: LinkAttempt? = null
+
+    /** Fires a Link failure when no first frame shows within [LinkFallback.FIRST_FRAME_TIMEOUT_MS]. */
+    private var firstFrameJob: Job? = null
+
+    /** First position reported after the watchdog started; playback moving past it counts as a frame. */
+    private var firstFrameBaseline: Long? = null
+
+    /** Last playback position reached on the current link, used when the player has none. */
+    private var lastKnownPosition: Long = 0L
+
+    /** Position kept across Retry (Requirement 17.8); consumed by [startPlayer]. */
+    private var retryPosition: Long? = null
+
+    /** Link key whose HLS stream already got the highest-track override. */
+    private var forcedHighestFor: String? = null
+
+    private fun VideoLink.linkKey(): String =
+        first?.let { "${it.name}|${it.url}" } ?: second?.uri?.toString() ?: "null"
+
+    private fun VideoLink.displayName(): String = first?.name ?: second?.name ?: "NULL"
+
+    /** Player_Download_Button: visible while an online link plays for an episode (Requirement 18.3). */
+    private fun updateDownloadButton() {
+        playerBinding?.playerDownloadBtt?.isVisible =
+            currentSelectedLink?.first != null &&
+                    currentMeta is ResultEpisode &&
+                    viewModel.generator !is DownloadFileGenerator
+    }
+
+    /** Download the current episode from the player (Requirements 18.4-18.7, 19.2). */
+    private fun onPlayerDownloadClick() {
+        val ctx = context ?: return
+        val episode = currentMeta as? ResultEpisode ?: return
+        val response = viewModel.state.generatorState?.response ?: return
+
+        // Every online link, highest quality first, with its download capability
+        val candidates = playerSourceList().mapNotNull { display ->
+            val link = display.link.first ?: return@mapNotNull null
+            val info = LinkInfo(
+                key = display.link.linkKey(),
+                height = QualityPick.height(link.quality),
+                downloadable = link.type in LOADTYPE_INAPP_DOWNLOAD,
+            )
+            info to link
+        }.distinctBy { it.first.key }
+        val infos = candidates.map { it.first }
+        val downloadable = candidates.filter { it.first.downloadable }
+
+        // No downloadable link: tell the user and queue nothing (18.7)
+        if (downloadable.isEmpty()) {
+            showToast(R.string.celium_episode_not_downloadable, Toast.LENGTH_LONG)
+            return
+        }
+
+        val playingKey = currentSelectedLink?.linkKey()
+        val preselected = QualityPick.preselect(infos, playingKey)
+        var selected = downloadable.indexOfFirst { it.first.key == preselected?.key }.coerceAtLeast(0)
+        val playingNotDownloadable =
+            playingKey != null && infos.firstOrNull { it.key == playingKey }?.downloadable != true
+
+        val labels = downloadable.map { (info, link) ->
+            val height = if (info.height > 0) "${info.height}p" else Qualities.getStringByInt(link.quality)
+            "$height · ${link.name}"
+        }.toTypedArray()
+
+        val builder = AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
+            .setTitle(
+                if (playingNotDownloadable) {
+                    // The line explaining why the playing link is not offered (18.6)
+                    "${ctx.getString(R.string.celium_download_quality)}\n" +
+                            ctx.getString(R.string.celium_playing_link_not_downloadable)
+                } else {
+                    ctx.getString(R.string.celium_download_quality)
+                }
+            )
+            .setSingleChoiceItems(labels, selected) { _, which -> selected = which }
+            .setPositiveButton(R.string.celium_confirm) { dialog, _ ->
+                val link = downloadable.getOrNull(selected)?.second ?: return@setPositiveButton
+                DownloadQueueManager.addToQueue(
+                    DownloadObjects.DownloadQueueItem(
+                        episode,
+                        response.isMovie(),
+                        response.name,
+                        response.type,
+                        response.posterUrl,
+                        response.apiName,
+                        response.getId(),
+                        response.url,
+                        listOf(link),
+                        viewModel.state.subtitles.toList(),
+                    ).toWrapper()
+                )
+                dialog.dismiss()
+                player.handleEvent(CSPlayerEvent.Pause, PlayerEventSource.UI)
+                activity?.navigate(R.id.navigation_downloads)
+            }
+            // Dismiss or Cancel queues nothing
+            .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.dismiss() }
+        builder.show()
+    }
+
+    /**
+     * Player_Source_List: all links, highest quality first ([QualityPick.order] is stable,
+     * so equal heights keep the quality-profile order).
+     */
+    private fun playerSourceList(qualityProfile: Int = currentQualityProfile): List<DisplayLink> {
+        val sorted = viewModel.state.sortLinks(qualityProfile)
+        val infos = sorted.map { display ->
+            val extractorLink = display.link.first
+            LinkInfo(
+                key = display.link.linkKey(),
+                height = QualityPick.height(extractorLink?.quality ?: Qualities.Unknown.value),
+                downloadable = extractorLink != null && extractorLink.type in LOADTYPE_INAPP_DOWNLOAD,
+            )
+        }
+        val pool = LinkedHashMap<String, ArrayDeque<DisplayLink>>()
+        sorted.forEach { pool.getOrPut(it.link.linkKey()) { ArrayDeque() }.addLast(it) }
+        return QualityPick.order(infos).mapNotNull { pool[it.key]?.removeFirstOrNull() }
+    }
+
+    /** Keys that may be auto-started: links hidden by the profile are listed but never auto-tried. */
+    private fun autoOrder(list: List<DisplayLink> = playerSourceList()): List<String> =
+        list.filter { it.shouldUseLink }.map { it.link.linkKey() }.distinct()
+
+    /** The current attempt with the latest order (links may still be arriving). */
+    private fun refreshedAttempt(): LinkAttempt? {
+        val order = autoOrder()
+        linkAttempt?.let { return LinkFallback.withOrder(it, order) }
+        // Recreated or externally started playback: treat the playing link as tried.
+        val currentKey = currentSelectedLink?.linkKey() ?: return null
+        return LinkAttempt(order = order, tried = setOf(currentKey), current = currentKey)
+    }
+
+    private fun startFirstFrameWatchdog() {
+        cancelFirstFrameWatchdog()
+        val owner = viewLifecycleOwnerLiveData.value ?: return
+        firstFrameJob = owner.lifecycleScope.launch {
+            delay(LinkFallback.FIRST_FRAME_TIMEOUT_MS)
+            firstFrameJob = null
+            playerError(TimeoutException("No first frame in ${LinkFallback.FIRST_FRAME_TIMEOUT_MS / 1000} s"))
+        }
+    }
+
+    private fun cancelFirstFrameWatchdog() {
+        firstFrameJob?.cancel()
+        firstFrameJob = null
+        firstFrameBaseline = null
+    }
+
+    /** Position the failed link reached (0 when no frame was shown on a fresh start). */
+    private fun reachedPosition(): Long =
+        player.getPosition()?.takeIf { it > 0L } ?: lastKnownPosition
+
+    /** Forces the top HLS rendition, the existing player selects tracks by id (Requirement 18.1). */
+    private fun forceHighestHlsTrack(tracks: CurrentTracks) {
+        val link = currentSelectedLink ?: return
+        if (link.first?.type != ExtractorLinkType.M3U8) return
+        val key = link.linkKey()
+        if (forcedHighestFor == key) return
+        val candidates = tracks.allVideoTracks.filter { it.id != null }
+        if (candidates.size < 2) return
+        val top = candidates.maxWithOrNull(
+            compareBy<VideoTrack>({ it.height ?: 0 }, { it.width ?: 0 })
+        ) ?: return
+        forcedHighestFor = key
+        if (tracks.currentVideoTrack?.id == top.id) return
+        player.setMaxVideoSize(id = top.id)
     }
 
     data class TempMetaData(
@@ -1122,10 +1315,13 @@ class GeneratorPlayer : FullScreenPlayer() {
 
                 fun refreshLinks(qualityProfile: Int) {
                     val currentLinkUsed = currentSelectedLink
-                    // Always display current linkFooter
-                    val sortedLinks = viewModel.state.sortLinks(qualityProfile)
+                    // Player_Source_List lists every link found, highest quality first (17.4, 18.1)
+                    val sortedLinks = playerSourceList(qualityProfile)
+                    val failedKeys = (linkAttempt?.failed ?: emptySet()) +
+                            viewModel.state.erroredLinks.map { it.linkKey() }
+                    val failedLabel = ctx.getString(R.string.celium_link_failed)
 
-                    filteredLinks = sortedLinks.filter { it.shouldUseLink || it.link == currentLinkUsed }
+                    filteredLinks = sortedLinks
 
                     if (sortedLinks.isEmpty()) {
                         sourceDialog.findViewById<LinearLayout>(R.id.sort_sources_holder)?.isGone =
@@ -1140,7 +1336,9 @@ class GeneratorPlayer : FullScreenPlayer() {
                         sourcesArrayAdapter.addAll(filteredLinks.map { displayLink ->
                             val (link, uri) = displayLink.link
                             val name = link?.name ?: uri?.name ?: "NULL"
-                            "$name ${Qualities.getStringByInt(link?.quality)}"
+                            val playing = if (displayLink.link == currentLinkUsed) "✓ " else ""
+                            val failed = if (displayLink.link.linkKey() in failedKeys) " · $failedLabel" else ""
+                            "$playing$name ${Qualities.getStringByInt(link?.quality)}$failed"
                         })
 
                         providerList.choiceMode = AbsListView.CHOICE_MODE_SINGLE
@@ -1154,7 +1352,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                         }
 
                         providerList.setOnItemLongClickListener { _, _, position, _ ->
-                            sortedLinks.getOrNull(position)?.link?.first?.url?.let {
+                            filteredLinks.getOrNull(position)?.link?.first?.url?.let {
                                 clipboardHelper(
                                     txt(R.string.video_source),
                                     it
@@ -1395,7 +1593,15 @@ class GeneratorPlayer : FullScreenPlayer() {
                     }
                     if (init) {
                         filteredLinks.getOrNull(sourceIndex)?.let {
-                            loadLink(it.link, true)
+                            if (sourceIndex != startSource) {
+                                // Manual pick, also of a failed link; failed marks stay (17.4, 17.5)
+                                val attempt = refreshedAttempt()
+                                    ?: LinkFallback.retry(autoOrder())
+                                linkAttempt = LinkFallback.onUserSelect(attempt, it.link.linkKey())
+                                loadLink(it.link, true, resumeAt = reachedPosition())
+                            } else {
+                                loadLink(it.link, true)
+                            }
                         }
                     }
                     sourceDialog.dismissSafe(activity)
@@ -1563,6 +1769,7 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     override fun playerError(exception: Throwable) {
+        cancelFirstFrameWatchdog()
         currentSelectedLink?.let { link ->
             viewModel.modifyState { this.addError(link) }
         }
@@ -1583,29 +1790,58 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         if (!hasNextMirror()) {
             viewModel.forceClearCache = true
+            // Every link failed: mark the current one and show the retry overlay
+            // instead of leaving the player (Requirement 17.6).
+            linkAttempt?.let { linkAttempt = LinkFallback.onFailure(it).first }
+            noLinksFound()
+            return
         }
         super.playerError(exception)
     }
 
+    /**
+     * Stops loading and shows `player_no_links_holder` with Retry instead of leaving the
+     * player (Requirements 3.9, 17.6). Back still leaves the player.
+     */
     private fun noLinksFound() {
         viewModel.forceClearCache = true
+        cancelFirstFrameWatchdog()
         val hiddenLinks = viewModel.state.sortLinks(currentQualityProfile).count { !it.shouldUseLink }
 
-        context?.let { ctx ->
-            // Display that there are hidden links to the user.
-            if (hiddenLinks > 0) {
-                val noLinksString = ctx.getString(R.string.no_links_found_toast)
-                val hiddenString =
-                    ctx.resources.getQuantityString(R.plurals.links_hidden, hiddenLinks)
-                        .format(hiddenLinks)
-                val toastText = "$noLinksString\n($hiddenString)"
-                showToast(toastText, Toast.LENGTH_SHORT)
-            } else {
-                showToast(R.string.no_links_found_toast, Toast.LENGTH_SHORT)
-            }
-        }
+        val b = binding ?: return
+        val ctx = b.root.context
+        safe { player.handleEvent(CSPlayerEvent.Pause, PlayerEventSource.UI) }
 
-        activity?.popCurrentPage()
+        val message = if (viewModel.state.links.isEmpty()) {
+            // Extraction finished with zero links from the source (Requirement 3.9)
+            val apiName = viewModel.state.generatorState?.response?.apiName
+            if (apiName.isNullOrBlank()) ctx.getString(R.string.celium_no_playable_link)
+            else ctx.getString(R.string.celium_no_links_for_source, apiName)
+        } else {
+            ctx.getString(R.string.celium_no_playable_link)
+        }
+        // Keep telling the user that the quality profile hides links.
+        val text = if (hiddenLinks > 0) {
+            val hiddenString = ctx.resources.getQuantityString(R.plurals.links_hidden, hiddenLinks)
+                .format(hiddenLinks)
+            "$message\n($hiddenString)"
+        } else message
+
+        b.overlayLoadingSkipButton.isVisible = false
+        b.playerLoadingOverlay.isVisible = false
+        b.playerNoLinksText.text = text
+        b.playerNoLinksHolder.isVisible = true
+        b.playerNoLinksRetry.requestFocus()
+    }
+
+    /** Retry: re-run extraction, clear failure marks, keep the reached position (Requirement 17.8). */
+    private fun retryLinks() {
+        retryPosition = reachedPosition().takeIf { it > 0L }
+        linkAttempt = LinkFallback.retry(emptyList())
+        viewModel.forceClearCache = true
+        viewModel.state.clearSortedLinksCache()
+        binding?.playerNoLinksHolder?.isVisible = false
+        viewModel.loadLinks()
     }
 
     private fun startPlayer() {
@@ -1614,9 +1850,10 @@ class GeneratorPlayer : FullScreenPlayer() {
             return
         }
 
-        val links = viewModel.state.sortLinks(currentQualityProfile)
-
-        val firstAvailableLink = links.firstOrNull { it.shouldUseLink }?.link
+        // Highest quality first, each link tried at most once per attempt (17.2, 17.7, 18.1)
+        val list = playerSourceList()
+        val (attempt, firstKey) = LinkFallback.start(autoOrder(list))
+        val firstAvailableLink = firstKey?.let { key -> list.firstOrNull { it.link.linkKey() == key } }?.link
         if (firstAvailableLink == null) {
             noLinksFound()
             return
@@ -1625,7 +1862,10 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (!isPlayerActive.compareAndSet(false, true)) {
             return
         }
-        loadLink(firstAvailableLink, false)
+        linkAttempt = attempt
+        val resume = retryPosition
+        retryPosition = null
+        loadLink(firstAvailableLink, false, resumeAt = resume)
         showPlayerMetadata()
     }
 
@@ -1692,37 +1932,54 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    private fun getNextLink(): DisplayLink? {
-        val links = viewModel.state.sortLinks(currentQualityProfile)
-        val currentIndex = links.indexOfFirst { it.link == currentSelectedLink }
-        val nextPotentialLink =
-            links.withIndex().firstOrNull { it.index > currentIndex && it.value.shouldUseLink }
-        return nextPotentialLink?.value
-    }
-
+    /** True when the fallback has an untried link left in Player_Source_List order (17.1, 17.7). */
     override fun hasNextMirror(): Boolean {
-        return getNextLink() != null
+        val attempt = refreshedAttempt() ?: return false
+        return LinkFallback.onFailure(attempt).second != null
     }
 
+    /** Marks the current link failed and plays the next untried one at the reached position (17.1, 17.3). */
     override fun nextMirror() {
-        val nextLink = getNextLink()
+        val attempt = refreshedAttempt()
+        if (attempt == null) {
+            noLinksFound()
+            return
+        }
+        val (updated, nextKey) = LinkFallback.onFailure(attempt)
+        linkAttempt = updated
+        val nextLink = nextKey?.let { key ->
+            playerSourceList().firstOrNull { it.link.linkKey() == key }
+        }
         if (nextLink == null) {
             noLinksFound()
             return
         }
 
-        loadLink(nextLink.link, true)
+        val failedPosition = reachedPosition()
+        context?.let { ctx ->
+            showToast(ctx.getString(R.string.celium_trying_link, nextLink.link.displayName()), Toast.LENGTH_SHORT)
+        }
+        loadLink(nextLink.link, true, resumeAt = failedPosition)
     }
 
     override fun onDestroy() {
         ResultFragment.updateUI()
         currentVerifyLink?.cancel()
+        cancelFirstFrameWatchdog()
         super.onDestroy()
     }
 
     var maxEpisodeSet: Int? = null
     var hasRequestedStamps: Boolean = false
     override fun playerPositionChanged(position: Long, duration: Long) {
+        if (position > 0L) lastKnownPosition = position
+        // Playback advancing means frames are shown, so the link did not time out (17.1)
+        if (firstFrameJob != null) {
+            val baseline = firstFrameBaseline
+            if (baseline == null) firstFrameBaseline = position
+            else if (position - baseline >= 500L) cancelFirstFrameWatchdog()
+        }
+
         // Don't save livestream data
         if ((currentMeta as? ResultEpisode)?.tvType?.isLiveStream() == true) return
 
@@ -2044,6 +2301,8 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     override fun playerDimensionsLoaded(width: Int, height: Int) {
         super.playerDimensionsLoaded(width, height)
+        // Video size is known once the first frame is decoded
+        cancelFirstFrameWatchdog()
         setPlayerDimen(width to height)
     }
 
@@ -2213,11 +2472,15 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     @MainThread
     fun releasePlayer() {
+        cancelFirstFrameWatchdog()
         player.release()
         currentSelectedSubtitles = null
         currentSelectedLink = null
+        updateDownloadButton()
         isPlayerActive.set(false)
+        lastKnownPosition = 0L
         binding?.overlayLoadingSkipButton?.isVisible = false
+        binding?.playerNoLinksHolder?.isVisible = false
         binding?.playerLoadingOverlay?.isVisible = true
         viewModel.modifyState { setError(emptyList()) }
         uiReset()
@@ -2309,9 +2572,22 @@ class GeneratorPlayer : FullScreenPlayer() {
             exitPlayer()
         }
 
+        binding.playerNoLinksRetry.setOnClickListener {
+            retryLinks()
+        }
+
+        binding.playerNoLinksBack.setOnClickListener {
+            exitPlayer()
+        }
+
         playerBinding?.downloadHeader?.setOnClickListener {
             it?.isVisible = false
         }
+
+        playerBinding?.playerDownloadBtt?.setOnClickListener {
+            onPlayerDownloadClick()
+        }
+        updateDownloadButton()
 
         playerBinding?.downloadHeaderToggle?.setOnClickListener {
             playerBinding?.downloadHeader?.let {

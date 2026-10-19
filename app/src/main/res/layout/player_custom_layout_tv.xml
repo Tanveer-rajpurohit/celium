@@ -1117,6 +1117,17 @@
                             app:icon="@drawable/ic_baseline_playlist_play_24" />
 
                         <com.google.android.material.button.MaterialButton
+                            android:id="@+id/player_download_btt"
+                            style="@style/VideoButtonTV"
+                            android:contentDescription="@string/celium_player_download"
+                            android:nextFocusLeft="@id/player_sources_btt"
+                            android:nextFocusRight="@id/player_tracks_btt"
+                            android:nextFocusUp="@id/player_pause_play"
+                            android:text="@string/celium_player_download"
+                            android:visibility="gone"
+                            app:icon="@drawable/netflix_download" />
+
+                        <com.google.android.material.button.MaterialButton
                             android:id="@+id/player_tracks_btt"
                             style="@style/VideoButtonTV"
                             android:nextFocusLeft="@id/player_sources_btt"

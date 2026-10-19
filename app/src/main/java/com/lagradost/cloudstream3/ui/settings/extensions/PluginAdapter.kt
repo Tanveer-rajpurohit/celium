@@ -16,6 +16,9 @@ import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.databinding.RepositoryItemBinding
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.plugins.PluginWrapper
+import com.lagradost.cloudstream3.plugins.FrameOrigin
+import com.lagradost.cloudstream3.plugins.PluginOrigin
+import com.lagradost.cloudstream3.plugins.PopupGuard
 import com.lagradost.cloudstream3.ui.BaseDiffCallback
 import com.lagradost.cloudstream3.ui.NoStateAdapter
 import com.lagradost.cloudstream3.ui.ViewHolderState
@@ -126,7 +129,11 @@ class PluginAdapter(
                 binding.actionSettings.isVisible = true
                 binding.actionSettings.setOnClickListener {
                     try {
-                        plugin.openSettings?.invoke(itemView.context)
+                        val pluginName = (PluginOrigin.ofClass(plugin.javaClass) as? FrameOrigin.Plugin)?.name
+                            ?: metadata.internalName
+                        PopupGuard.userAction(pluginName) {
+                            plugin.openSettings?.invoke(itemView.context)
+                        }
                     } catch (e: Throwable) {
                         Log.e(
                             "PluginAdapter",

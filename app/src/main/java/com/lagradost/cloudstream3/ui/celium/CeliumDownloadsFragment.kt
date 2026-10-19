@@ -84,6 +84,17 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
         // The tick invalidates only this destination's lightweight progress rows.
         @Suppress("UNUSED_VARIABLE") val progressTick = tick
         BackHandler(selected != null) { selected = null }
+        // Queue, active and failed items come from the shared state flow (Requirement 19); each id appears once.
+        val tracked by CeliumDownloads.items.collectAsState()
+        val inProgress = remember(tracked) { tracked.values.filter { it.state != DlState.Completed }.sortedWith(compareBy({ it.addedSeq }, { it.id })) }
+        val activeIds = remember(inProgress) { inProgress.mapTo(HashSet()) { it.id } }
+        val activePerParent = remember(inProgress) { inProgress.mapNotNull { CeliumDownloads.parentOf(it.id) }.groupingBy { it }.eachCount() }
+        // The library lists only finished items; titles whose every file is still in progress are hidden.
+        val library = headers.filter { header ->
+            val movieActive = header.child?.id?.let { it in activeIds } == true
+            !movieActive && header.totalDownloads - (activePerParent[header.data.id] ?: 0) > 0
+        }
+        val files = children.filter { it.data.id !in activeIds }
         CeliumTheme {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column {
@@ -94,9 +105,18 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
                     Text("Your offline library", Modifier.padding(horizontal = 24.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!loaded) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (failed) CeliumEmpty("Downloads could not load", "Check that the download location is still accessible.")
-                    if (loaded && headers.isEmpty() && !failed) CeliumEmpty("No downloads yet", "Open a title and choose Download. Available quality and speed depend on the source.")
+                    if (loaded && library.isEmpty() && inProgress.isEmpty() && !failed) CeliumEmpty("No downloads yet", "Open a title and choose Download. Available quality and speed depend on the source.")
                     LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                        if (selected == null) items(headers, key = { it.data.id }, contentType = { "download-header" }) { header ->
+                        if (selected == null && inProgress.isNotEmpty()) {
+                            item("in-progress-title", contentType = "section-title") {
+                                Text("In progress", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                            }
+                            items(inProgress, key = { "dl-${it.id}" }, contentType = { "download-progress" }) { item -> ProgressRow(item) }
+                            if (library.isNotEmpty()) item("library-title", contentType = "section-title") {
+                                Text("Library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        if (selected == null) items(library, key = { it.data.id }, contentType = { "download-header" }) { header ->
                             Column {
                                 Row(Modifier.fillMaxWidth().clickable { open(header) }, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                     CeliumArtwork(header.data.poster, modifier = Modifier.width(72.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
@@ -113,7 +133,7 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
                                 header.child?.let { child -> DownloadControls(child, header.currentBytes, header.totalBytes) }
                                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                             }
-                        } else items(children, key = { it.data.id }, contentType = { "download-file" }) { child ->
+                        } else items(files, key = { it.data.id }, contentType = { "download-file" }) { child ->
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(child.data.name ?: "Episode ${child.data.episode}", style = MaterialTheme.typography.titleMedium)
                                 Text("Season ${child.data.season ?: 1} · Episode ${child.data.episode} · ${formatShortFileSize(context, child.currentBytes)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -125,6 +145,35 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
                     }
                 }
             }
+        }
+    }
+
+    /** One queued, downloading, paused or failed item with the shared state label and actions. */
+    @Composable
+    private fun ProgressRow(item: DlItem) {
+        val context = LocalContext.current
+        Column {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                CeliumArtwork(item.poster, modifier = Modifier.width(72.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(item.title.ifBlank { "Download" }, style = MaterialTheme.typography.titleMedium)
+                    if (item.subtitle.isNotBlank()) Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    CeliumDownloadActions.label(item.state, item.percent)?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    when (item.state) {
+                        DlState.Queued -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        DlState.Downloading, DlState.Paused -> LinearProgressIndicator(progress = { item.percent / 100f }, modifier = Modifier.fillMaxWidth())
+                        else -> Unit
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                DownloadBook.actions(item.state).forEach { action ->
+                    TextButton(onClick = { CeliumDownloadActions.perform(context, item.id, action) }) { Text(CeliumDownloadActions.text(action)) }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
         }
     }
 

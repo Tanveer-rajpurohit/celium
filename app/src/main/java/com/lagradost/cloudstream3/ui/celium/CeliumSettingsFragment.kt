@@ -1,6 +1,15 @@
 package com.lagradost.cloudstream3.ui.celium
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.lagradost.cloudstream4.compose.colorpicker.DoubleColorPicker
+import com.lagradost.cloudstream4.compose.colorpicker.HsvColor
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -81,8 +90,9 @@ class CeliumSettingsFragment : BaseComposeFragment() {
         var adultEnabled by remember { mutableStateOf(MainAPI.settingsForProvider.enableAdult) }
         val mode by CeliumStyle.mode.collectAsState()
         val accent by CeliumStyle.accent.collectAsState()
-        var accentDraft by remember(accent) { mutableStateOf(accent) }
-        var invalidAccent by remember { mutableStateOf(false) }
+        var accentDialog by remember { mutableStateOf(false) }
+        val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+        val dark = mode == "Dark" || (mode == "System" && systemDark)
         var connections by remember { mutableIntStateOf(prefs.getInt(getString(R.string.download_concurrent_key), 3)) }
         var downloads by remember { mutableIntStateOf(prefs.getInt(getString(R.string.download_parallel_key), 3)) }
         var page by remember { mutableStateOf("Settings") }
@@ -111,12 +121,14 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                                     }, label = { Text(label) }) }
                                 }
                                 Text("Neutral by default. Artwork keeps its original colors.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                OutlinedTextField(accentDraft, { accentDraft = it.take(7); invalidAccent = false }, label = { Text("Optional accent · HEX") }, placeholder = { Text("e.g. 56785A") }, singleLine = true, isError = invalidAccent, modifier = Modifier.fillMaxWidth())
-                                Row {
-                                    TextButton(onClick = { invalidAccent = !CeliumStyle.accent(accentDraft) }) { Text("Apply accent") }
-                                    TextButton(onClick = { CeliumStyle.accent(""); accentDraft = "" }) { Text("Use neutral") }
+                                Text(
+                                    "Accent: " + (CeliumColor.parseHex(accent)?.let { "#" + CeliumColor.formatHex(it) } ?: "Neutral"),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedButton(onClick = { accentDialog = true }) { Text("Choose accent") }
+                                    TextButton(onClick = { CeliumStyle.accent("") }) { Text("Use neutral") }
                                 }
-                                if (invalidAccent) Text("Enter six hexadecimal characters, or leave empty.")
                             }
                         }
                         item("content") {
@@ -127,6 +139,14 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                                         Text("Off hides adult sources, history and saved titles.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(adultEnabled, { adultEnabled = it; adult(it) })
+                                }
+                                val randomEnabled by CeliumPrefs.randomButton(context).collectAsState()
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Random button", fontWeight = FontWeight.Medium)
+                                        Text("Show a Random button on the feed that opens a random loaded title.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(randomEnabled, { CeliumPrefs.setRandomButton(context, it) })
                                 }
                                 OutlinedButton(onClick = { page = "Content sources" }) { Text("Manage content sources") }
                             }
@@ -182,6 +202,15 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                         }
                     }
                 }
+                if (accentDialog) {
+                    CeliumAccentDialog(
+                        initialHex = accent,
+                        dark = dark,
+                        onConfirm = { hex -> CeliumStyle.accent(hex); accentDialog = false },
+                        onNeutral = { CeliumStyle.accent(""); accentDialog = false },
+                        onDismiss = { accentDialog = false },
+                    )
+                }
                 if (fontLicense) {
                     val license = remember { context.resources.openRawResource(R.raw.dm_sans_license).bufferedReader().use { it.readText() } }
                     AlertDialog(onDismissRequest = { fontLicense = false }, title = { Text("DM Sans · Open Font License") },
@@ -202,3 +231,86 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
     }
 }
 
+
+private fun Hsv.toHsvColor(): HsvColor = HsvColor(h, s, v)
+private fun HsvColor.toRgb(): Int = CeliumColor.hsvToRgb(Hsv(hue, saturation, value))
+
+/**
+ * Visual accent picker (Requirement 13). Nothing is stored until Confirm or "Use neutral";
+ * Cancel and outside taps keep the previous accent.
+ */
+@Composable
+fun CeliumAccentDialog(
+    initialHex: String,
+    dark: Boolean,
+    onConfirm: (String) -> Unit,
+    onNeutral: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialRgb = remember(initialHex, dark) { CeliumColor.parseHex(initialHex) ?: CeliumColor.neutral(dark) }
+    var hsv by rememberSaveable(stateSaver = HsvColor.Saver) { mutableStateOf(CeliumColor.rgbToHsv(initialRgb).toHsvColor()) }
+    var hexText by rememberSaveable { mutableStateOf(CeliumColor.formatHex(initialRgb)) }
+    val parsed = CeliumColor.parseHex(hexText)
+    val invalid = parsed == null
+    // While the field is invalid, keep previewing the last valid picker colour.
+    val candidate = parsed ?: hsv.toRgb()
+    val preview = CeliumColor.effectiveAccent(CeliumColor.formatHex(candidate), dark)
+    val previewHex = CeliumColor.formatHex(preview)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose accent") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                DoubleColorPicker(
+                    color = { hsv },
+                    onColorChange = {
+                        hsv = it
+                        hexText = CeliumColor.formatHex(it.toRgb())
+                    },
+                    modifier = Modifier.size(240.dp),
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(opaque(preview))
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                            .semantics { contentDescription = "Accent preview #$previewHex" }
+                    )
+                    OutlinedTextField(
+                        value = hexText,
+                        onValueChange = { text ->
+                            hexText = text.take(7)
+                            CeliumColor.parseHex(hexText)?.let { rgb -> hsv = CeliumColor.rgbToHsv(rgb).toHsvColor() }
+                        },
+                        label = { Text("HEX") },
+                        placeholder = { Text("56785A") },
+                        singleLine = true,
+                        isError = invalid,
+                        supportingText = { if (invalid) Text("Enter 6 hex digits, for example 56785A.") },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { parsed?.let { onConfirm(CeliumColor.formatHex(it)) } }, enabled = !invalid) { Text("Confirm") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onNeutral) { Text("Use neutral") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
