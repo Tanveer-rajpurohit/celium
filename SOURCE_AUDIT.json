@@ -1,7 +1,7 @@
 {
   "checkedOn": "2026-10-18",
   "scope": "SHA-256 and extension ZIP manifest/classes.dex inspection; packages not executed. This does not verify source websites or playback.",
-  "note": "23 selected artifacts. The 18 carried-forward entries keep their earlier package/digest inspection. The 5 Celium 6 additions (AniKoto, HiAnime, Movies4u, Moviesmod from the CSX repository, XNXX) record versions and digests from live repo json on 2026-10-18; their packages were not downloaded or inspected here. AnimePahe and Porn36 excluded. Not a website or playback verification.",
+  "note": "Celium 7: 24 selected artifacts. The 16 earlier inspected entries keep their package/digest inspection. The 5 Celium 6 additions (AniKoto, HiAnime, Movies4u, Moviesmod, XNXX) record digests from live repo json. The 3 Celium 7 additions (CNC Verse, MovieBoxProvider, CineStream) record versions from live plugins.json; hashes unverified. PikashowProvider and CNC Verse Mobile removed. AnimePahe and Porn36 excluded. Not a website or playback verification.",
   "artifacts": [
     {
       "internalName": "MultiMoviesProvider",
@@ -180,26 +180,34 @@
       "error": null
     },
     {
-      "internalName": "PikashowProvider",
-      "version": 32,
-      "expectedVersion": 32,
-      "versionMatch": true,
-      "sha256Verified": true,
-      "androidDexPresent": true,
-      "pluginClass": "com.cncverse.PikashowPlugin",
-      "bytes": 82128,
-      "error": null
+      "internalName": "CNC Verse",
+      "version": 114,
+      "expectedVersion": 114,
+      "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
+      "expectedSha256": null,
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "unverified: package not inspected; version from live plugins.json"
     },
     {
-      "internalName": "CNC Verse Mobile",
-      "version": 11,
-      "expectedVersion": 11,
-      "versionMatch": true,
-      "sha256Verified": true,
-      "androidDexPresent": true,
-      "pluginClass": "com.horis.cncverse.CNCVersePlugin",
-      "bytes": 97614,
-      "error": null
+      "internalName": "MovieBoxProvider",
+      "version": 52,
+      "expectedVersion": 52,
+      "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
+      "expectedSha256": null,
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "unverified: package not inspected; version from live plugins.json"
+    },
+    {
+      "internalName": "CineStream",
+      "version": 487,
+      "expectedVersion": 487,
+      "repository": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+      "expectedSha256": null,
+      "sha256Verified": null,
+      "androidDexPresent": null,
+      "error": "unverified: package not inspected; version from live plugins.json"
     },
     {
       "internalName": "AniKoto",

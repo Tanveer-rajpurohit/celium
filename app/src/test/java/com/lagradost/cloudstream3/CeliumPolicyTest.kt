@@ -48,7 +48,7 @@ class CeliumPolicyTest {
 
     @Test
     fun `catalog lists AniKoto and HiAnime first and the anime pool keeps catalog order`() {
-        assertEquals(23, CeliumSources.all.size)
+        assertEquals(24, CeliumSources.all.size)
         val anime = CeliumSources.choices(CeliumSection.Anime)
         assertEquals(listOf("celium", "anikoto", "hianime", "anichi", "animedekho"), anime.map { it.id })
         assertEquals(listOf("anikoto", "hianime", "anichi"),

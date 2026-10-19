@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="result_poster_img_des">পোস্টার</string>
-    <string name="play_with_app_name">CloudStream দিয়ে প্লে করুন</string>
+    <string name="play_with_app_name">Celium দিয়ে প্লে করুন</string>
     <string name="title_home">হোম</string>
     <string name="cast_format" formatted="true">অভিনয়ে: %s</string>
     <string name="next_episode_time_day_format" formatted="true">%1$dদিন %2$dঘন্টা %3$dমিনিট</string>
@@ -511,11 +511,11 @@
     <string name="plugins_disabled" formatted="true">নিষ্ক্রিয়: %d</string>
     <string name="plugins_not_downloaded" formatted="true">ডাউনলোড করা হয়নি: %d</string>
     <string name="plugins_updated" formatted="true">%dটি প্লাগইন আপডেট করা হয়েছে</string>
-    <string name="blank_repo_message">CloudStream-এ ডিফল্টভাবে কোনো সাইট ইনস্টল করা থাকে না। আপনাকে রিপোজিটরি থেকে সাইটগুলো ইনস্টল করতে হবে।\n\nআমাদের Discord-এ যুক্ত হোন অথবা অনলাইনে অনুসন্ধান করুন।</string>
+    <string name="blank_repo_message">Celium-এ ডিফল্টভাবে কোনো সাইট ইনস্টল করা থাকে না। আপনাকে রিপোজিটরি থেকে সাইটগুলো ইনস্টল করতে হবে।\n\nআমাদের Discord-এ যুক্ত হোন অথবা অনলাইনে অনুসন্ধান করুন।</string>
     <string name="view_public_repositories_button">কমিউনিটি রিপোজিটরিগুলো দেখুন</string>
     <string name="view_public_repositories_button_short">পাবলিক তালিকা</string>
     <string name="uppercase_all_subtitles">সব সাবটাইটেল বড় হাতের অক্ষরে দেখান</string>
-    <string name="download_all_plugins_from_repo">সতর্কতা: তৃতীয় পক্ষের এক্সটেনশন ব্যবহারের জন্য CloudStream কোনো দায়িত্ব নেয় না এবং সেগুলোর জন্য কোনো সহায়তা প্রদান করে না!</string>
+    <string name="download_all_plugins_from_repo">সতর্কতা: তৃতীয় পক্ষের এক্সটেনশন ব্যবহারের জন্য Celium কোনো দায়িত্ব নেয় না এবং সেগুলোর জন্য কোনো সহায়তা প্রদান করে না!</string>
     <string name="single_plugin_disabled" formatted="true">%s (নিষ্ক্রিয়)</string>
     <string name="tracks">ট্র্যাকসমূহ</string>
     <string name="compressor">কম্প্রেসর</string>
@@ -578,9 +578,9 @@
     <string name="dismiss">বাতিল</string>
     <string name="open_downloaded_repo">রিপোজিটরি খুলুন</string>
     <string name="battery_dialog_title">ব্যাটারি অপ্টিমাইজেশন নিষ্ক্রিয় করুন</string>
-    <string name="battery_dialog_message">সাবস্ক্রাইব করা টিভি শোগুলোর নিরবচ্ছিন্ন ডাউনলোড এবং নোটিফিকেশন নিশ্চিত করতে CloudStream-এর ব্যাকগ্রাউন্ডে চলার অনুমতি প্রয়োজন। ঠিক আছে চাপলে একটি অনুমতির ডায়ালগ দেখানো হবে।\n\nঅনুগ্রহ করে \'অনুমতি দিন\' চাপুন।\n\nমনে রাখবেন, এই অনুমতির কারণে CS3 আপনার অতিরিক্ত ব্যাটারি খরচ করবে না। এটি কেবল প্রয়োজনের সময়ই ব্যাকগ্রাউন্ডে কাজ করবে, যেমন অফিসিয়াল এক্সটেনশন থেকে ভিডিও ডাউনলোড বা নোটিফিকেশন প্রাপ্তির সময়।</string>
+    <string name="battery_dialog_message">সাবস্ক্রাইব করা টিভি শোগুলোর নিরবচ্ছিন্ন ডাউনলোড এবং নোটিফিকেশন নিশ্চিত করতে Celium-এর ব্যাকগ্রাউন্ডে চলার অনুমতি প্রয়োজন। ঠিক আছে চাপলে একটি অনুমতির ডায়ালগ দেখানো হবে।\n\nঅনুগ্রহ করে \'অনুমতি দিন\' চাপুন।\n\nমনে রাখবেন, এই অনুমতির কারণে CS3 আপনার অতিরিক্ত ব্যাটারি খরচ করবে না। এটি কেবল প্রয়োজনের সময়ই ব্যাকগ্রাউন্ডে কাজ করবে, যেমন অফিসিয়াল এক্সটেনশন থেকে ভিডিও ডাউনলোড বা নোটিফিকেশন প্রাপ্তির সময়।</string>
     <string name="app_unrestricted_toast">অ্যাপের ব্যাটারি ব্যবহার ইতোমধ্যে সীমাবদ্ধতাহীন হিসেবে সেট করা আছে</string>
-    <string name="app_info_intent_error">CloudStream-এর অ্যাপের তথ্য খোলা যাচ্ছে না।</string>
+    <string name="app_info_intent_error">Celium-এর অ্যাপের তথ্য খোলা যাচ্ছে না।</string>
     <string name="update_notification_downloading">অ্যাপ আপডেট ডাউনলোড হচ্ছে…</string>
     <string name="update_notification_installing">অ্যাপ আপডেট ইনস্টল হচ্ছে…</string>
     <string name="update_notification_failed">অ্যাপের নতুন সংস্করণ ইনস্টল করা যায়নি</string>
@@ -670,15 +670,15 @@
     <string name="auto_rotate_video">অটো রোটেট</string>
     <string name="favorite">প্রিয়</string>
     <string name="unfavorite">প্রিয় থেকে সরান</string>
-    <string name="biometric_authentication_title">CloudStream আনলক করুন</string>
+    <string name="biometric_authentication_title">Celium আনলক করুন</string>
     <string name="biometric_setting">বায়োমেট্রিক দিয়ে লক করুন</string>
     <string name="password_pin_authentication_title">পাসওয়ার্ড/PIN প্রমাণীকরণ</string>
     <string name="biometric_unsupported">এই ডিভাইসে বায়োমেট্রিক প্রমাণীকরণ সমর্থিত নয়</string>
     <string name="biometric_setting_summary">ফিঙ্গারপ্রিন্ট, Face ID, PIN, প্যাটার্ন ও পাসওয়ার্ড দিয়ে অ্যাপ আনলক করুন।</string>
     <string name="biometric_prompt_description">কয়েকবার ব্যর্থ প্রচেষ্টার পর প্রম্পটটি বন্ধ হয়ে যাবে। পুনরায় চেষ্টা করতে কেবল অ্যাপটি রিস্টার্ট করুন।</string>
-    <string name="biometric_warning">আপনার CloudStream ডেটা এখন ব্যাকআপ করা হয়েছে। এমনটি ঘটার সম্ভাবনা অত্যন্ত কম হলেও প্রতিটি ডিভাইস ভিন্নভাবে আচরণ করতে পারে। বিরল ক্ষেত্রে যদি অ্যাপ অ্যাক্সেস করা থেকে লক হয়ে যান, তবে সম্পূর্ণ অ্যাপ ডেটা পরিষ্কার করুন এবং ব্যাকআপ থেকে পুনরুদ্ধার করুন। এর ফলে উদ্ভূত যেকোনো অসুবিধার জন্য আমরা আন্তরিকভাবে দুঃখিত।</string>
+    <string name="biometric_warning">আপনার Celium ডেটা এখন ব্যাকআপ করা হয়েছে। এমনটি ঘটার সম্ভাবনা অত্যন্ত কম হলেও প্রতিটি ডিভাইস ভিন্নভাবে আচরণ করতে পারে। বিরল ক্ষেত্রে যদি অ্যাপ অ্যাক্সেস করা থেকে লক হয়ে যান, তবে সম্পূর্ণ অ্যাপ ডেটা পরিষ্কার করুন এবং ব্যাকআপ থেকে পুনরুদ্ধার করুন। এর ফলে উদ্ভূত যেকোনো অসুবিধার জন্য আমরা আন্তরিকভাবে দুঃখিত।</string>
     <string name="reset_btn">রিসেট</string>
-    <string name="cs3wiki">CloudStream উইকি</string>
+    <string name="cs3wiki">Celium উইকি</string>
     <string name="device_pin_url_message">ভিজিট করুন</string>
     <string name="device_pin_error_message">ডিভাইসের PIN কোড পাওয়া যাচ্ছে না, স্থানীয় প্রমাণীকরণ চেষ্টা করুন</string>
     <string name="device_pin_expired_message">PIN কোডের মেয়াদ শেষ হয়েছে!</string>

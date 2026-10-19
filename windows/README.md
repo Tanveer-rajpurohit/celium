@@ -1,14 +1,36 @@
 # Celium on Windows
-This launcher runs the same Android APK in an existing Android emulator. It is not a native Windows port of Android extensions.
 
-1. Install Android Studio and create an Android Virtual Device (AVD). These prerequisites are not bundled.
-2. Edit celium-windows.json: set sdkPath (escape Windows backslashes as double backslashes in JSON) and your actual avdName.
-3. Keep celium.apk beside the scripts. Double-click Start Celium.cmd.
-4. To check paths without launching/installing, run Start Celium.cmd -ValidateOnly.
+Celium extensions are Android-only, so on a PC Celium runs inside an Android emulator. This package installs and opens the bundled `celium.apk` in your own Android Virtual Device (AVD). It is not a native Windows port.
 
-The launcher targets only the configured emulator serial, checks its AVD identity, waits up to 180 seconds and updates the APK with data-preserving install. It never uninstalls the application or stops unrelated emulators. A local marker avoids re-installing the same APK on every launch.
+## Prerequisites
 
-The wrapper permits this bundled script in its own PowerShell process; it does not change the stored machine/user execution policy, PATH, firewall, VPN or virtualization settings. Organization-enforced policies still apply.
+- Android Studio with the Android SDK (Emulator and Platform-Tools installed).
+- An AVD created in Android Studio's Device Manager.
 
-[Official emulator documentation](https://developer.android.com/studio/run/emulator-commandline).
+These are not bundled.
 
+## Setup
+
+1. Edit `celium-windows.json`:
+   - `sdkPath`: your Android SDK folder. Escape backslashes in JSON, e.g. `"C:\\Users\\you\\AppData\\Local\\Android\\Sdk"`.
+   - `avdName`: the exact name of your AVD.
+   - `emulatorPort`: an even port from 5554 to 5682 (default 5562).
+2. Keep `celium.apk` in the package root, next to `Start-Celium.ps1`.
+
+## Run
+
+- Double-click `bin\Celium.cmd`. It starts the emulator if needed, waits for it to boot (up to 180 seconds), installs or updates Celium, and opens it. `Start Celium.cmd` in the root does the same.
+- To check your config and files without starting anything, run from a terminal:
+
+  ```
+  bin\Celium.cmd -ValidateOnly
+  ```
+
+If something fails, the window stays open with the error message.
+
+## Notes
+
+- Updates use a data-preserving install. The launcher never uninstalls Celium or stops other emulators, and only targets the configured emulator port after confirming its AVD name.
+- The execution policy bypass applies only to this script's own PowerShell process. No system settings are changed.
+
+See the [Android emulator documentation](https://developer.android.com/studio/run/emulator-commandline) for help with AVDs.

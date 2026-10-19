@@ -55,8 +55,9 @@ object CeliumSources {
         CeliumSource("multi", "MultiMovies", "MultiMoviesProvider", PHISHER, aliases = setOf("MultiMovies")),
         CeliumSource("hdhub", "HDhub4u", "HDhub4u", PHISHER),
         CeliumSource("hdmovie2", "HDmovie2", "Hdmovie2", PHISHER),
-        CeliumSource("pika", "PikaShow", "PikashowProvider", CNC, aliases = setOf("Pikashow")),
-        CeliumSource("netmirror", "NetMirror Mobile", "CNC Verse Mobile", CNC),
+        CeliumSource("cnc", "Netflix · Prime · Disney+", "CNC Verse", CNC),
+        CeliumSource("moviebox", "MovieBox", "MovieBoxProvider", CNC),
+        CeliumSource("cinestream", "CineStream", "CineStream", CSX),
         CeliumSource("movies4u", "Movies4u", "Movies4u", PHISHER),
         CeliumSource("moviesmod", "Moviesmod", "Moviesmod", CSX),
         // Anime: AniKoto first, HiAnime second, so the Celium Feed pool starts with them.
@@ -76,7 +77,7 @@ object CeliumSources {
         CeliumSource("xvideos", "Xvideos", "xVideos", GIZLI, true),
         CeliumSource("youperv", "Youperv", "Youperv", GIZLI, true, aliases = setOf("Yourprev")),
         CeliumSource("xnxx", "XNXX", "XNXX", CXXX, adult = true),
-    ) // 23 entries
+    ) // 24 entries
 
     /** First [limit] candidates, in catalog order, whose id is loaded. The Celium Feed entry is never part of a pool. */
     fun orderedPool(candidates: List<CeliumSource>, loadedIds: Set<String>, limit: Int = 3): List<CeliumSource> =
@@ -141,6 +142,13 @@ object CeliumSources {
     fun catalogIdentity(card: CeliumTile): String = if (card.year != null && card.type != null) {
         "title:${normalize(card.name)}:${card.type}:${card.year}"
     } else "url:${card.apiName}:${card.url}"
+
+    /** Home accepts every Movies and TV Shows item: anything that is not Adult or Anime (3.5). */
+    fun acceptsHome(type: TvType?): Boolean =
+        type != TvType.NSFW && type != TvType.Anime && type != TvType.AnimeMovie && type != TvType.OVA
+
+    fun homeFilter(cards: List<SearchResponse>): List<SearchResponse> =
+        cards.filter { acceptsHome(it.type) }.distinctBy { it.apiName to it.url }
 
     fun filter(section: CeliumSection, cards: List<SearchResponse>): List<SearchResponse> =
         cards.filter { accepts(section, it.type) }.distinctBy { it.apiName to it.url }

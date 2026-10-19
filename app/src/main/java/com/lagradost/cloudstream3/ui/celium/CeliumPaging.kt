@@ -24,19 +24,25 @@ object CeliumPaging {
     /** Timeout for a single page request. */
     const val TIMEOUT_MS = 30_000L
 
+    /** URL-based stable key for list items (Compose `key`), shared with dedup. */
+    fun stableKey(url: String): String = CeliumDedup.key(url)
+
     /**
-     * Appends [page] after [existing]. Existing items keep their order and are never
-     * removed or moved. Page items whose key is already present (in [existing] or
-     * earlier in [page]) are dropped, so the first occurrence wins.
+     * Appends [page] after [existing] via [CeliumDedup.appendNew]. Existing items keep
+     * their order and are never removed or moved. Page items whose normalised Title URL
+     * ([CeliumDedup.key] of [key]) is already present, in [existing] or earlier in
+     * [page], are dropped, so the first occurrence wins (Req 10.2).
+     * [AppendResult.added] == 0 means the page added nothing and paging should stop.
      */
     fun <T> append(existing: List<T>, page: List<T>, key: (T) -> String): AppendResult<T> {
-        val seen = HashSet<String>(existing.size + page.size)
-        existing.forEach { seen.add(key(it)) }
-        val fresh = page.filter { seen.add(key(it)) }
-        return AppendResult(existing + fresh, fresh.size)
+        val merged = CeliumDedup.appendNew(existing, page, key)
+        return AppendResult(merged.items, merged.newCount)
     }
 
-    /** Status after a page lands: End when nothing new arrived or the provider has no next page. */
+    /**
+     * Status after a page lands: End when nothing new arrived (`newCount == 0`) or the
+     * provider has no next page (Req 10.1, 5.4).
+     */
     fun statusAfter(added: Int, providerHasNext: Boolean): PageStatus =
         if (added <= 0 || !providerHasNext) PageStatus.End else PageStatus.Idle
 

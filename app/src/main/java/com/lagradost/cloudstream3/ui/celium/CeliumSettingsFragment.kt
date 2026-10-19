@@ -129,6 +129,13 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                                     OutlinedButton(onClick = { accentDialog = true }) { Text("Choose accent") }
                                     TextButton(onClick = { CeliumStyle.accent("") }) { Text("Use neutral") }
                                 }
+                                val layoutSize by CeliumPrefs.layoutSize(context).collectAsState()
+                                Text("Card size", style = MaterialTheme.typography.bodyMedium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CeliumLayoutSize.entries.forEach { size -> FilterChip(layoutSize == size, {
+                                        CeliumPrefs.setLayoutSize(context, size)
+                                    }, label = { Text(size.name) }) }
+                                }
                             }
                         }
                         item("content") {

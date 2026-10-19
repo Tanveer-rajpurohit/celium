@@ -27,9 +27,10 @@ object CeliumSelector {
 
 object CeliumRecommendations {
     /**
-     * Filters recommendations for display (Requirements 9.7, 9.8):
-     * keeps source order, drops the item for [selfUrl], keeps the first item per URL,
-     * and drops adult items when [adultEnabled] is false.
+     * Filters recommendations for display (Requirements 1.1, 1.2, 9.7, 9.8):
+     * keeps source order, drops adult items when [adultEnabled] is false, then keeps the
+     * first item per normalised Title URL and drops every item matching [selfUrl]
+     * (compared with [CeliumDedup.key], so trailing '/', query, or host case do not repeat).
      */
     fun filter(
         items: List<SearchResponse>,
@@ -37,11 +38,7 @@ object CeliumRecommendations {
         adultEnabled: Boolean,
         isAdult: (SearchResponse) -> Boolean,
     ): List<SearchResponse> {
-        val seen = HashSet<String>()
-        return items.filter { item ->
-            item.url != selfUrl &&
-                (adultEnabled || !isAdult(item)) &&
-                seen.add(item.url)
-        }
+        val allowed = if (adultEnabled) items else items.filter { !isAdult(it) }
+        return CeliumDedup.distinctByUrl(allowed, excludeUrl = selfUrl) { it.url }
     }
 }

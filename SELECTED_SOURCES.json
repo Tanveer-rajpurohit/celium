@@ -1,6 +1,6 @@
 {
   "reviewedOn": "2026-10-18",
-  "note": "23 selected legacy artifacts (Celium 6 added AniKoto, HiAnime, Movies4u, Moviesmod from the CSX repository, and XNXX; entries from live repo json on 2026-10-18). AnimePahe and Porn36 excluded. Adult disabled by default; live playback not verified. Celium Feed is an app-owned coordinator, not an extra binary.",
+  "note": "Celium 7: 24 selected artifacts. Celium 7 removed PikashowProvider and CNC Verse Mobile and added CNC Verse (CNC, v114), MovieBoxProvider (CNC, v52) and CineStream (CSX, v487); hashes for the additions are unverified. AnimePahe and Porn36 excluded. Adult disabled by default; live playback not verified. Celium Feed is an app-owned coordinator, not an extra binary.",
   "artifacts": [
     {
       "repository": "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
@@ -263,27 +263,30 @@
     },
     {
       "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
-      "internalName": "PikashowProvider",
-      "version": 32,
+      "internalName": "CNC Verse",
+      "version": 114,
       "status": 1,
-      "url": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/PikashowProvider.cs3",
-      "fileHash": "sha256-1375d18dfc913d2e03036c1aeeccfb46ee266108a6e2e467b7d6f3f4b2ff6d2d",
-      "authors": [
-        "NivinCNC"
-      ],
+      "fileHash": null,
+      "hashStatus": "unverified",
       "sourceRepository": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension"
     },
     {
       "repository": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/refs/heads/builds/CNC.json",
-      "internalName": "CNC Verse Mobile",
-      "version": 11,
+      "internalName": "MovieBoxProvider",
+      "version": 52,
       "status": 1,
-      "url": "https://raw.githubusercontent.com/NivinCNC/CNCVerse-Cloud-Stream-Extension/builds/CNC Verse Mobile.cs3",
-      "fileHash": "sha256-356a0faa2ca6ada4dc112093dfab893c89ea3fa2f4c5ca777d1e77dc125c7a04",
-      "authors": [
-        "NivinCNC"
-      ],
+      "fileHash": null,
+      "hashStatus": "unverified",
       "sourceRepository": "https://github.com/NivinCNC/CNCVerse-Cloud-Stream-Extension"
+    },
+    {
+      "repository": "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+      "internalName": "CineStream",
+      "version": 487,
+      "status": 1,
+      "fileHash": null,
+      "hashStatus": "unverified",
+      "sourceRepository": "https://github.com/SaurabhKaperwan/CSX"
     }
   ],
   "adultDefault": false

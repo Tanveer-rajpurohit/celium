@@ -83,6 +83,28 @@ object CeliumMigration {
         )
     }
 
+    // ---- Celium 7 (Req 7.6–7.8) ----
+    const val V7_KEY = "celium_defaults_v7"
+
+    /** internalNames of plugins the Celium 7 migration uninstalls (Req 7.6). */
+    val V7_REMOVED_PLUGINS: Set<String> = setOf("PikashowProvider", "CNC Verse Mobile")
+
+    /** Source ids dropped from the catalogue in Celium 7. */
+    val V7_REMOVED_SOURCE_IDS: Set<String> = setOf("pika", "netmirror")
+
+    /** Celium Feed id each Section falls back to. */
+    const val CELIUM_FEED_ID = "celium"
+
+    /** True when a saved plugin should be uninstalled by the Celium 7 migration. */
+    fun isV7RemovedPlugin(internalName: String): Boolean = internalName in V7_REMOVED_PLUGINS
+
+    /**
+     * Remaps a saved Section source selection (Req 7.7). Returns the replacement id,
+     * or null when the selection should be left unchanged.
+     */
+    fun remapV7Source(saved: String?): String? =
+        if (saved != null && saved in V7_REMOVED_SOURCE_IDS) CELIUM_FEED_ID else null
+
     /** Model of the stores after [plan] is written, used by tests. */
     fun apply(input: MigrationInput, plan: MigrationPlan): MigrationInput = input.copy(
         defaultsV1 = input.defaultsV1 || plan.markV1,

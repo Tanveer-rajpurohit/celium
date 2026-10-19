@@ -3,11 +3,13 @@ package com.lagradost.cloudstream3.plugins
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import java.io.File
 import com.lagradost.cloudstream3.AutoDownloadMode
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.ui.celium.CeliumSection
 import com.lagradost.cloudstream3.ui.settings.extensions.REPOSITORIES_KEY
 import com.lagradost.cloudstream3.ui.settings.extensions.RepositoryData
@@ -64,6 +66,46 @@ internal object PersonalDefaults {
             if (plan.markV1) putBoolean(CeliumMigration.V1_KEY, true)
             if (plan.markV2) putBoolean(CeliumMigration.V2_KEY, true)
             if (plan.markV3) putBoolean(CeliumMigration.V3_KEY, true)
+        }
+
+        if (!preferences.getBoolean(CeliumMigration.V7_KEY, false)) {
+            migrateV7()
+            // Written last so an interrupted run retries; each step is idempotent (Req 7.8).
+            preferences.edit { putBoolean(CeliumMigration.V7_KEY, true) }
+        }
+    }
+
+    /**
+     * Celium 7: uninstall PikaShow and NetMirror Mobile (Req 7.6) and point saved selections
+     * at the Section's Celium Feed (Req 7.7). Runs before plugins load, so removing the files
+     * and their saved PluginData is enough. Errors are logged and never block start-up.
+     */
+    private fun migrateV7() {
+        try {
+            val saved = getKey<Array<PluginData>>(PLUGINS_KEY)?.toList().orEmpty()
+            val (removed, kept) = saved.partition { CeliumMigration.isV7RemovedPlugin(it.internalName) }
+            removed.forEach { data ->
+                try {
+                    val file = File(data.filePath)
+                    if (file.exists() && !file.delete()) {
+                        logError(IllegalStateException("Could not delete plugin file ${data.filePath}"))
+                    }
+                } catch (t: Throwable) {
+                    logError(t)
+                }
+            }
+            if (removed.isNotEmpty()) setKey(PLUGINS_KEY, kept.toTypedArray())
+        } catch (t: Throwable) {
+            logError(t)
+        }
+
+        try {
+            CeliumSection.entries.forEach { section ->
+                val key = "celium_source_${section.name}"
+                CeliumMigration.remapV7Source(getKey<String>(key))?.let { setKey(key, it) }
+            }
+        } catch (t: Throwable) {
+            logError(t)
         }
     }
 }

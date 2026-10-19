@@ -23,6 +23,8 @@ import com.lagradost.cloudstream3.ui.APIRepository
 import com.lagradost.cloudstream3.ui.home.HomeViewModel
 import com.lagradost.cloudstream3.ui.search.SearchRanking
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -86,6 +88,8 @@ data class CeliumSnapshot(
 data class CeliumSourceStatus(val source: CeliumSource, val installed: Boolean, val hasFeed: Boolean, val reason: String? = null)
 
 data class CeliumState(
+    /** Home_Feed is the landing screen: the Movies/TV Celium Feed with Movies and TV Shows combined (3.1, 15.5). */
+    val home: Boolean = true,
     val section: CeliumSection = CeliumSection.Movies,
     val source: CeliumSource = CeliumSources.selected(CeliumSection.Movies, null),
     val sources: List<CeliumSourceStatus> = emptyList(),
@@ -126,11 +130,20 @@ data class CeliumState(
     }
 }
 
+/** CeliumRequestGate keys for the feed (provider/category/Section) and the search query. */
+private const val GATE_FEED = "feed"
+private const val GATE_SEARCH = "search"
+/** Per-slot main-page request deadline; a slow provider never holds the others back (6.5, 6.7). */
+private const val FEED_TIMEOUT_MS = 15_000L
+/** Cache key of the Home_Feed (the Movies/TV Celium Feed, unsplit). */
+private const val HOME_CACHE_KEY = "celium_feed_v2_Home_celium"
+
 @OptIn(FlowPreview::class)
 class CeliumViewModel : ViewModel() {
     private val _state = MutableStateFlow(CeliumState())
     val state = _state.asStateFlow()
-    private val permits = Semaphore(2)
+    /** At most 2 requests per provider at once; different providers run concurrently (6.4). */
+    private val providerPermits = mutableMapOf<String, Semaphore>()
     private val repositories = mutableMapOf<MainAPI, APIRepository>()
     private var feedJob: Job? = null
     private var searchJob: Job? = null
@@ -138,8 +151,10 @@ class CeliumViewModel : ViewModel() {
     private var bindWatchdog: Job? = null
     private var sectionJob: Job? = null
     private val pageJobs = mutableMapOf<String, Job>()
-    private var generation = 0
-    private var searchGeneration = 0
+    /** Every feed and search load runs through this gate; only the latest token per key may apply results (4.5, 10.3–10.6). */
+    private val gate = CeliumRequestGate()
+    private var generation = 0L
+    private var searchGeneration = 0L
     private var boundApi: MainAPI? = null
     /** Providers backing the current catalogue, by source id. */
     private var catalogApis: Map<String, MainAPI> = emptyMap()
@@ -154,9 +169,13 @@ class CeliumViewModel : ViewModel() {
     private val pluginSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     init {
-        val section = CeliumSection.entries.firstOrNull { it.name == getKey<String>("celium_section") } ?: CeliumSection.Movies
-        _state.value = CeliumState(section = section,
-            source = CeliumSources.selected(section, getKey("celium_source_${section.name}")))
+        // Fresh start opens Home (3.1); a saved Section view is restored otherwise.
+        val home = getKey<Boolean>("celium_home") ?: true
+        val section = if (home) CeliumSection.Movies
+            else CeliumSection.entries.firstOrNull { it.name == getKey<String>("celium_section") } ?: CeliumSection.Movies
+        _state.value = CeliumState(home = home, section = section,
+            source = if (home) CeliumSources.curated(CeliumSection.Movies)
+                else CeliumSources.selected(section, getKey("celium_source_${section.name}")))
         // Subscribed for the view model's whole lifetime, not only while a fragment is started (16.4).
         CeliumSources.ready += ::sourcePolicyChanged
         MainActivity.afterPluginsLoadedEvent += ::pluginsLoaded
@@ -182,11 +201,49 @@ class CeliumViewModel : ViewModel() {
 
     private fun providers(): List<MainAPI> = APIHolder.apis.withLock { APIHolder.apis.toList() }
     private fun repo(api: MainAPI): APIRepository = repositories.getOrPut(api) { APIRepository(api) }
-    private fun key(section: CeliumSection, source: CeliumSource) = "celium_feed_v1_${section.name}_${source.id}"
+    private fun permitsFor(api: MainAPI): Semaphore =
+        synchronized(providerPermits) { providerPermits.getOrPut(api.name) { Semaphore(2) } }
+    private fun key(section: CeliumSection, source: CeliumSource, home: Boolean = false) =
+        if (home) HOME_CACHE_KEY else "celium_feed_v2_${section.name}_${source.id}"
+    private fun key(state: CeliumState) = key(state.section, state.source, state.home)
 
     /** A result may be shown only if its request is current and still for the selected source (16.6, 16.11). */
-    private fun live(token: Int, sourceId: String) = token == generation && _state.value.source.id == sourceId
-    private fun liveSearch(token: Int, sourceId: String) = token == searchGeneration && _state.value.source.id == sourceId
+    private fun live(token: Long, sourceId: String) =
+        token == generation && gate.isCurrent(GATE_FEED, token) && _state.value.source.id == sourceId
+    private fun liveSearch(token: Long, sourceId: String) =
+        token == searchGeneration && gate.isCurrent(GATE_SEARCH, token) && _state.value.source.id == sourceId
+
+    /**
+     * Starts [block] as the only current request for [key]: the gate cancels the previous Job for the key
+     * and issues a new token before the block runs, so stale results are dropped (10.3, 10.5, 10.6).
+     */
+    private fun gated(key: String, onToken: (Long) -> Unit, block: suspend CoroutineScope.(Long) -> Unit): Job {
+        var token = 0L
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) { block(token) }
+        token = gate.next(key, job)
+        onToken(token)
+        job.start()
+        return job
+    }
+
+    /**
+     * Movies/TV Shows Section views (provider or Celium Feed) split each category with the classifier.
+     * Home is never split: it keeps the unsplit Celium 6 categories (15.5).
+     */
+    private fun splitsFeed(home: Boolean, section: CeliumSection) =
+        !home && (section == CeliumSection.Movies || section == CeliumSection.Series)
+
+    /**
+     * Items of one category (or one search page when [category] is null) that belong to the view.
+     * Home accepts every Movies and TV Shows item (3.5). With [classify] the Content_Classifier assigns
+     * every item to exactly one of Movies/TV Shows (TV-series type → TV Shows); otherwise the type
+     * filter applies (Anime, Adult). Call off the main thread (5.3).
+     */
+    private fun sectionItems(section: CeliumSection, home: Boolean, classify: Boolean, category: String?, items: List<SearchResponse>): List<SearchResponse> = when {
+        home -> CeliumSources.homeFilter(items)
+        classify -> CeliumDedup.distinctByUrl(CeliumContentClassifier.split(category.orEmpty(), items)[section].orEmpty(), null) { it.url }
+        else -> CeliumSources.filter(section, items)
+    }
 
     private fun startWatchdog() {
         selectedAt = SystemClock.elapsedRealtime()
@@ -207,7 +264,10 @@ class CeliumViewModel : ViewModel() {
         queryCache.keys.removeAll { it.first == CeliumSection.Adult }
         val adultSources = listOf(CeliumSources.curated(CeliumSection.Adult)) + CeliumSources.all.filter { it.adult }
         viewModelScope.launch(Dispatchers.IO) {
-            try { adultSources.forEach { removeKey(key(CeliumSection.Adult, it)) }
+            try { adultSources.forEach {
+                    removeKey(key(CeliumSection.Adult, it))
+                    removeKey("celium_feed_v1_${CeliumSection.Adult.name}_${it.id}")
+                }
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { logError(e) }
         }
@@ -280,16 +340,25 @@ class CeliumViewModel : ViewModel() {
         if (pendingQuery.isNotBlank()) query(pendingQuery)
     }
 
+    /** Opens a Section view; this always leaves Home. */
     fun selectSection(section: CeliumSection) {
         if (section == CeliumSection.Adult && !MainAPI.settingsForProvider.enableAdult) return
-        if (section == _state.value.section) return
-        select(section, CeliumSources.selected(section, getKey("celium_source_${section.name}")))
+        if (!_state.value.home && section == _state.value.section) return
+        select(section, CeliumSources.selected(section, getKey("celium_source_${section.name}")), home = false)
     }
 
+    /** Opens Home: the Movies/TV Celium Feed with Movies and TV Shows combined (3.1, 15.5). */
+    fun selectHome() {
+        if (_state.value.home) return
+        select(CeliumSection.Movies, CeliumSources.curated(CeliumSection.Movies), home = true)
+    }
+
+    /** Picking an individual provider from Home opens that provider's Movies view. */
     fun selectSource(source: CeliumSource) {
-        if (source !in CeliumSources.choices(_state.value.section)) return
-        if (source == _state.value.source) return
-        select(_state.value.section, source)
+        val current = _state.value
+        if (source !in CeliumSources.choices(current.section)) return
+        if (source == current.source) return
+        select(current.section, source, home = current.home && source.id == "celium")
     }
 
     private fun cancelJobs() {
@@ -299,18 +368,22 @@ class CeliumViewModel : ViewModel() {
         sectionJob?.cancel()
         pageJobs.values.forEach { it.cancel() }
         pageJobs.clear()
-        generation++
-        searchGeneration++
+        // New tokens make every in-flight feed and search result stale (10.3, 10.6).
+        generation = gate.next(GATE_FEED)
+        searchGeneration = gate.next(GATE_SEARCH)
     }
 
-    private fun select(section: CeliumSection, source: CeliumSource) {
-        val pendingQuery = _state.value.query.takeIf { _state.value.section == section }.orEmpty()
+    private fun select(section: CeliumSection, source: CeliumSource, home: Boolean = false) {
+        val previous = _state.value
+        val pendingQuery = previous.query.takeIf { previous.section == section && previous.home == home }.orEmpty()
+        setKey("celium_home", home)
         setKey("celium_section", section.name)
-        setKey("celium_source_${section.name}", source.id)
+        // Home's fixed Celium Feed source does not overwrite the Section's saved source choice.
+        if (!home) setKey("celium_source_${section.name}", source.id)
         cancelJobs()
         boundApi = null
         feedSignature = ""
-        _state.value = CeliumState(section = section, source = source, adultEnabled = MainAPI.settingsForProvider.enableAdult)
+        _state.value = CeliumState(home = home, section = section, source = source, adultEnabled = MainAPI.settingsForProvider.enableAdult)
         startWatchdog()
         load()
         sourcesChanged()
@@ -385,40 +458,55 @@ class CeliumViewModel : ViewModel() {
     }
 
     /** One category request: its rows as shelves, or null on failure/timeout. */
-    private suspend fun fetchSlot(slot: CategorySlot, section: CeliumSection, force: Boolean): List<CeliumShelf>? {
+    private suspend fun fetchSlot(slot: CategorySlot, section: CeliumSection, home: Boolean, split: Boolean, force: Boolean): List<CeliumShelf>? {
         val api = catalogApis[slot.providerId] ?: return null
         val repository = repo(api)
         return try {
-            val response = withTimeoutOrNull(CeliumPaging.TIMEOUT_MS) {
-                permits.withPermit { withContext(Dispatchers.IO) {
+            // Only this provider's own limit applies; its home-delay throttle never blocks another
+            // provider, and the 15 s deadline covers this one request (6.4, 6.5, 6.7).
+            val response = permitsFor(api).withPermit {
+                withContext(Dispatchers.IO) {
                     repository.waitForHomeDelay()
-                    repository.getMainPage(1, slot.index.takeIf { it >= 0 }, forceRefresh = force)
-                } }
+                    withTimeoutOrNull(FEED_TIMEOUT_MS) {
+                        repository.getMainPage(1, slot.index.takeIf { it >= 0 }, forceRefresh = force)
+                    }
+                }
             }
             if (response !is Resource.Success) return null
-            var row = 0
-            response.value.filterNotNull().flatMap { page ->
-                page.items.map { list ->
-                    // Duplicates are removed only within a category; no item cap (21.3).
-                    val cards = CeliumSources.filter(section, list.list).map(CeliumTile::from).distinctBy { it.url }
-                    CeliumShelf("${slot.providerId}:${slot.index}:${row++}", list.name, cards, slot.index,
-                        hasNext = page.hasNext, sourceId = slot.providerId)
-                }
-            }.filter { it.cards.isNotEmpty() }
+            // Classification and dedup run off the main thread (5.3).
+            withContext(Dispatchers.Default) {
+                var row = 0
+                response.value.filterNotNull().flatMap { page ->
+                    page.items.map { list ->
+                        // Movies/TV Shows: the same category is split by the classifier, so this Section's
+                        // Shelf holds only its own items (2.9–2.11). Duplicates are removed only within a
+                        // category; no item cap (21.3).
+                        // Home keeps the unsplit Celium 6 category with its original label (15.2, 15.6).
+                        val cards = sectionItems(section, home, split, list.name, list.list).map(CeliumTile::from).distinctBy { it.url }
+                        CeliumShelf("${slot.providerId}:${slot.index}:${row++}", list.name, cards, slot.index,
+                            hasNext = page.hasNext, sourceId = slot.providerId)
+                    }
+                }.filter { it.cards.isNotEmpty() } // A category with no items for this Section is hidden (2.12).
+            }
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) { logError(e); null }
     }
 
-    /** Fetches [batch] concurrently (bounded by permits); each slot lands as soon as it loads. Returns failures. */
-    private suspend fun fetchSlots(token: Int, sourceId: String, section: CeliumSection, batch: List<CategorySlot>, force: Boolean): Int {
+    /**
+     * Fetches [batch] concurrently (per-provider limits only); each slot lands as soon as it loads,
+     * replacing that slot's Shelves by key so the scroll position stays (6.5, 6.9). Returns failures.
+     */
+    private suspend fun fetchSlots(token: Long, sourceId: String, section: CeliumSection, batch: List<CategorySlot>, force: Boolean): Int {
         if (!live(token, sourceId)) return 0
+        val home = _state.value.home
+        val split = splitsFeed(home, section)
         val loading = _state.value.slotStatus + batch.associateWith { SlotStatus.Loading }
         _state.value = _state.value.copy(slotStatus = loading, remainingSections = CeliumCatalog.remaining(_state.value.slots, loading))
         var failures = 0
         coroutineScope {
             batch.forEach { slot ->
                 launch {
-                    val shelves = fetchSlot(slot, section, force)
+                    val shelves = fetchSlot(slot, section, home, split, force)
                     if (!live(token, sourceId)) return@launch
                     if (shelves == null) failures++
                     val s = _state.value
@@ -433,20 +521,24 @@ class CeliumViewModel : ViewModel() {
                 }
             }
         }
-        if (live(token, sourceId)) persist()
+        // The cache is overwritten only when this batch had at least one success (6.6, 6.8).
+        if (failures < batch.size && live(token, sourceId)) persist()
         return failures
     }
 
-    /** Stores every loaded shelf and the Loaded/Empty slots (21.6). Stale fallback shelves are not re-stamped. */
+    /**
+     * Overwrites the Feed_Cache with the shown Shelves in pool order and the save time (6.6, 14.9).
+     * Shelves of failed slots and of providers no longer in the pool are not re-stamped.
+     */
     private suspend fun persist() {
         val s = _state.value
         val loaded = s.slots.filter { s.slotStatus[it] == SlotStatus.Loaded || s.slotStatus[it] == SlotStatus.Empty }
         if (loaded.isEmpty()) return
-        val shelves = s.shelves.filter { s.slotStatus[s.slotOf(it)] == SlotStatus.Loaded }
+        val slotSet = s.slots.toSet()
+        val shelves = s.shelves.filter { s.slotOf(it) in slotSet && s.slotStatus[s.slotOf(it)] != SlotStatus.Failed }
         val stored = CeliumSnapshot(System.currentTimeMillis(), shelves, loaded)
-        try { withContext(Dispatchers.IO) { setKey(key(s.section, s.source), stored) }
-        } catch (e: CancellationException) { throw e
-        } catch (e: Exception) { logError(e) }
+        val cacheKey = key(s)
+        withContext(Dispatchers.IO) { CeliumFeedCache.write(cacheKey, stored) }
     }
 
     /**
@@ -454,11 +546,10 @@ class CeliumViewModel : ViewModel() {
      * slot; the first batch of 8 loads now, the rest via [moreSections] (21.1, 21.2, 21.7).
      */
     fun load(force: Boolean = false) {
-        val token = ++generation
         feedJob?.cancel()
         sectionJob?.cancel()
         searchJob?.cancel()
-        searchGeneration++
+        searchGeneration = gate.next(GATE_SEARCH)
         pageJobs.values.forEach { it.cancel() }
         pageJobs.clear()
         val current = _state.value
@@ -488,51 +579,52 @@ class CeliumViewModel : ViewModel() {
         _state.value = current.copy(busy = pool.isNotEmpty(), message = null, feedError = null, binding = binding,
             pages = emptyMap(), query = "", results = emptyList(), searching = false, searched = false,
             slots = slots, slotStatus = emptyMap(), slotTitles = titles, remainingSections = slots.size)
+        val cacheKey = key(current)
         val failedMessage = if (curated) "Celium Feed could not load." else "${current.source.label} feed could not load."
         val emptyMessage = if (curated) "No feed returned. Choose an individual source or try Search."
             else "No ${current.section.label.lowercase()} feed returned. Try search or choose another source."
-        feedJob = viewModelScope.launch {
+        // The gate cancels the previous feed load and only this token's results apply (10.3–10.6).
+        feedJob = gated(GATE_FEED, { generation = it }) { token ->
             try {
-                val snapshot = withContext(Dispatchers.IO) { getKey<CeliumSnapshot>(key(current.section, current.source)) }
-                if (!live(token, sourceId)) return@launch
-                val now = System.currentTimeMillis()
-                var restored = emptyMap<CategorySlot, SlotStatus>()
-                if (snapshot?.usable(now) == true) {
-                    val s = _state.value
-                    val shelves = snapshot.shelves.map { if (it.sourceId == null) it.copy(sourceId = sourceId) else it }
-                    val slotSet = slots.toSet()
-                    restored = snapshot.loaded.filter { it in slotSet }.associateWith { slot ->
-                        if (shelves.any { s.slotOf(it) == slot }) SlotStatus.Loaded else SlotStatus.Empty
+                // A cache younger than 6 h shows at once; an older or missing one leaves the Shelves empty so
+                // the UI shows Placeholders (6.1, 6.3). Shelves already on screen (refresh, late-ready rebind)
+                // stay until fresh ones replace them by key (6.9, 14.7).
+                if (_state.value.shelves.isEmpty()) {
+                    val snapshot = withContext(Dispatchers.IO) { CeliumFeedCache.read(cacheKey) }
+                    if (!live(token, sourceId)) return@gated
+                    if (snapshot != null && CeliumFeedCache.isFresh(snapshot, System.currentTimeMillis())) {
+                        val s = _state.value
+                        val shelves = snapshot.shelves.map { if (it.sourceId == null) it.copy(sourceId = sourceId) else it }
+                        _state.value = s.copy(shelves = ordered(shelves, s), cachedAt = snapshot.savedAt)
                     }
-                    _state.value = s.copy(shelves = ordered(shelves, s), cachedAt = snapshot.savedAt)
                 }
                 // Not registered yet: the binding status shows Preparing until a plugin event rebinds (16.3, 16.4).
-                if (pool.isEmpty()) return@launch
+                if (pool.isEmpty()) return@gated
                 if (!curated && !pool.first().second.hasMainPage) {
                     _state.value = _state.value.copy(message = "This adapter supports search but does not provide a home feed.")
-                    return@launch
+                    return@gated
                 }
-                if (!force && snapshot?.fresh(now) == true && restored.isNotEmpty()) {
-                    // Restored view continues from the next Pending slot (21.6).
-                    val s = _state.value
-                    _state.value = s.copy(slotStatus = restored, remainingSections = CeliumCatalog.remaining(slots, restored))
-                    setPage(CeliumState.SECTIONS, sectionsPaging(_state.value))
-                    return@launch
-                }
+                // Always refresh in the background, whatever the cache age (6.2).
                 var failures = 0
-                // Keep requesting batches while nothing is shown yet, so all-empty first categories don't strand the view.
+                // Keep requesting batches while no category has loaded yet, so all-empty first categories don't strand the view.
                 do {
                     val batch = CeliumCatalog.nextBatch(slots, _state.value.slotStatus)
                     if (batch.isEmpty()) break
                     failures += fetchSlots(token, sourceId, current.section, batch, force)
-                    if (!live(token, sourceId)) return@launch
-                } while (_state.value.shelves.isEmpty() && failures == 0)
+                    if (!live(token, sourceId)) return@gated
+                } while (_state.value.slotStatus.values.none { it == SlotStatus.Loaded } && failures == 0)
                 val s = _state.value
-                val stale = s.shelves.any { s.slotStatus[s.slotOf(it)] != SlotStatus.Loaded }
+                val succeeded = s.slotStatus.values.any { it == SlotStatus.Loaded || it == SlotStatus.Empty }
+                // After a success, Shelves of providers that left the pool (replaced by a higher-priority
+                // late-ready provider) are dropped; if everything failed the shown Shelves stay (6.8, 14.6).
+                val slotSet = slots.toSet()
+                val shelves = if (succeeded) s.shelves.filter { s.slotOf(it) in slotSet } else s.shelves
+                val stale = shelves.any { s.slotStatus[s.slotOf(it)] != SlotStatus.Loaded }
                 _state.value = s.copy(
+                    shelves = shelves,
                     cachedAt = if (stale) s.cachedAt else null,
-                    feedError = if (s.shelves.isEmpty() && failures > 0) failedMessage else null,
-                    message = if (s.shelves.isEmpty() && failures == 0) emptyMessage else null,
+                    feedError = if (shelves.isEmpty() && failures > 0) failedMessage else null,
+                    message = if (shelves.isEmpty() && failures == 0) emptyMessage else null,
                     pages = s.pages + (CeliumState.SECTIONS to sectionsPaging(s)))
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
@@ -559,16 +651,23 @@ class CeliumViewModel : ViewModel() {
         pageJobs[key] = viewModelScope.launch {
             var next = ListPaging(PageStatus.Error, "More titles could not load.")
             try {
-                val response = withTimeoutOrNull(CeliumPaging.TIMEOUT_MS) {
-                    permits.withPermit { withContext(Dispatchers.IO) {
+                val response = permitsFor(api).withPermit {
+                    withContext(Dispatchers.IO) {
                         repository.waitForHomeDelay()
-                        repository.getMainPage(target.page + 1, target.sectionIndex.takeIf { it >= 0 })
-                    } }
+                        withTimeoutOrNull(CeliumPaging.TIMEOUT_MS) {
+                            repository.getMainPage(target.page + 1, target.sectionIndex.takeIf { it >= 0 })
+                        }
+                    }
                 }
                 if (!live(token, sourceId)) return@launch
                 if (response is Resource.Success) {
                     val matching = response.value.filterNotNull().flatMap { page -> page.items.filter { it.name == target.title }.map { it to page.hasNext } }
-                    val extra = CeliumSources.filter(current.section, matching.flatMap { it.first.list }).map(CeliumTile::from)
+                    // Later pages use the same Home filter or classifier split as page 1, off the main thread (2.10, 5.3).
+                    val split = splitsFeed(current.home, current.section)
+                    val extra = withContext(Dispatchers.Default) {
+                        sectionItems(current.section, current.home, split, target.title, matching.flatMap { it.first.list }).map(CeliumTile::from)
+                    }
+                    if (!live(token, sourceId)) return@launch
                     val latest = _state.value.shelves.firstOrNull { it.key == key }
                     if (latest == null) next = ListPaging()
                     else {
@@ -590,13 +689,18 @@ class CeliumViewModel : ViewModel() {
         }
     }
 
+    /** Home and the Movies Celium Feed filter differently, so their query results are cached apart. */
+    private fun queryKey(state: CeliumState, query: String) =
+        Triple(state.section, if (state.home) "home:${state.source.id}" else state.source.id, query)
+
     /** Search uses only the selected provider; Celium Feed uses its first ready pool source (16.11). */
     private fun searchApi(current: CeliumState): MainAPI? =
         if (current.source.id == "celium") curatedProviders(current.section).firstOrNull()?.second else boundApi
 
     fun query(value: String) {
         searchJob?.cancel()
-        val token = ++searchGeneration
+        // A new query makes any in-flight search stale before its job is replaced (4.5).
+        searchGeneration = gate.next(GATE_SEARCH)
         val current = _state.value
         val sourceId = current.source.id
         val query = SearchRanking.cleanQuery(value).take(200)
@@ -605,29 +709,28 @@ class CeliumViewModel : ViewModel() {
             pages = current.pages - CeliumState.SEARCH)
         if (query.length < 2) return
         val api = searchApi(current)
-        searchJob = viewModelScope.launch {
+        searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
             delay(350)
-            if (!liveSearch(token, sourceId)) return@launch
+            if (!liveSearch(token, sourceId)) return@gated
             val local = withContext(Dispatchers.Default) {
                 SearchRanking.rank(query, current.shelves.flatMap { it.cards })
                     .filter { SearchRanking.score(query, it.name) > 0 }.map(CeliumTile::from)
             }
-            if (!liveSearch(token, sourceId)) return@launch
+            if (!liveSearch(token, sourceId)) return@gated
             _state.value = _state.value.copy(results = local)
             if (api == null) {
                 // While the provider is preparing keep the loading state; a rebind re-runs this query (16.3, 16.4).
                 val failed = _state.value.binding as? BindStatus.Failed
                 _state.value = if (failed == null) _state.value.copy(searching = true)
                     else _state.value.copy(searching = false, searched = true, searchError = failed.message)
-                return@launch
+                return@gated
             }
-            val cacheKey = Triple(current.section, sourceId, query)
-            val cached = queryCache[cacheKey]
+            val cached = queryCache[queryKey(current, query)]
             if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
                 // Only single-page results are cached, so the list is complete.
                 _state.value = _state.value.copy(results = cached.second, searching = false, searched = true,
                     pages = _state.value.pages + (CeliumState.SEARCH to ListPaging(PageStatus.End)))
-                return@launch
+                return@gated
             }
             runSearch(api, query, 1, token, local)
         }
@@ -645,7 +748,7 @@ class CeliumViewModel : ViewModel() {
         searchJob = viewModelScope.launch { runSearch(api, SearchRanking.cleanQuery(current.query), current.searchPage + 1, token, current.results) }
     }
 
-    private suspend fun runSearch(api: MainAPI, query: String, page: Int, token: Int, existing: List<CeliumTile>) {
+    private suspend fun runSearch(api: MainAPI, query: String, page: Int, token: Long, existing: List<CeliumTile>) {
         val current = _state.value
         val sourceId = current.source.id
         val repository = repo(api)
@@ -653,14 +756,19 @@ class CeliumViewModel : ViewModel() {
         val moreFailed = ListPaging(PageStatus.Error, "More results could not load.")
         try {
             val result = withTimeoutOrNull(CeliumPaging.TIMEOUT_MS) {
-                permits.withPermit { withContext(Dispatchers.IO) { repository.search(query, page) } }
+                permitsFor(api).withPermit { withContext(Dispatchers.IO) { repository.search(query, page) } }
             }
             if (!liveSearch(token, sourceId)) return
             if (result is Resource.Success) {
-                val items = CeliumSources.filter(current.section, result.value.items)
-                // Page 1 ranks local + remote; later pages rank only their own items (6.10, 6.11).
-                val ranked = withContext(Dispatchers.Default) {
-                    SearchRanking.rank(query, if (page == 1) existing + items else items).map(CeliumTile::from)
+                // Movies/TV Shows search keeps only results the classifier assigns to this Section; Anime/Adult
+                // keep their type filter and only ever query their own Section's sources (4.1–4.3).
+                // Home search keeps both Movies and TV Shows results (4.4).
+                val classify = splitsFeed(current.home, current.section)
+                // Classification, dedup, and ranking run off the main thread (5.3).
+                val (items, ranked) = withContext(Dispatchers.Default) {
+                    val items = sectionItems(current.section, current.home, classify, null, result.value.items)
+                    // Page 1 ranks local + remote; later pages rank only their own items (6.10, 6.11).
+                    items to SearchRanking.rank(query, if (page == 1) existing + items else items).map(CeliumTile::from)
                 }
                 if (!liveSearch(token, sourceId)) return
                 val (cards, added) = if (page == 1) ranked to items.size
@@ -671,7 +779,7 @@ class CeliumViewModel : ViewModel() {
                     pages = _state.value.pages + (CeliumState.SEARCH to ListPaging(after)))
                 // Paginated queries are not cached: their continuation cursor must remain intact.
                 if (page == 1 && !result.value.hasNext) {
-                    queryCache[Triple(current.section, sourceId, query)] = System.currentTimeMillis() to cards
+                    queryCache[queryKey(current, query)] = System.currentTimeMillis() to cards
                     while (queryCache.size > 24) queryCache.remove(queryCache.keys.first())
                 }
             } else _state.value = if (page == 1) _state.value.copy(searched = true, searchError = failed)
@@ -691,7 +799,11 @@ class CeliumViewModel : ViewModel() {
         val available = providers()
         val candidates = CeliumSources.choices(section).filter { it.id != "celium" }
         val resolved = candidates.mapNotNull { source -> CeliumSources.resolve(source, available)?.let { source.id to it } }.toMap()
-        return CeliumSources.orderedPool(candidates, resolved.keys).map { it to resolved.getValue(it.id) }
+        // Movies/TV pool (Home and the Section Celium Feed): MultiMovies → CineStream → Moviesmod → the rest,
+        // first 3 ready, so a not-ready provider's place goes to the next one (14.1–14.5, 15.4).
+        // Anime/Adult keep their catalogue order.
+        val ordered = if (section == CeliumSection.Movies || section == CeliumSection.Series) CeliumHomePool.orderPool(candidates) else candidates
+        return CeliumSources.orderedPool(ordered, resolved.keys).map { it to resolved.getValue(it.id) }
     }
 
     private fun loadResume() {
@@ -704,7 +816,8 @@ class CeliumViewModel : ViewModel() {
                 val resume = HomeViewModel.getResumeWatching().orEmpty()
                 if (!live(token, sourceId)) return@launch
                 val names = if (current.source.id == "celium") curatedProviders(current.section).map { it.second.name }.toSet() else setOfNotNull(boundApi?.name)
-                _state.value = _state.value.copy(resume = resume.filter { it.apiName in names && CeliumSources.accepts(current.section, it.type) }.take(20))
+                _state.value = _state.value.copy(resume = resume.filter { it.apiName in names &&
+                    if (current.home) CeliumSources.acceptsHome(it.type) else CeliumSources.accepts(current.section, it.type) }.take(20))
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { logError(e) }
         }

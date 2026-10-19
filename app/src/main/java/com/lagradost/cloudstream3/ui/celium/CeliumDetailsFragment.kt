@@ -73,6 +73,8 @@ class CeliumDetailsFragment : BaseComposeFragment() {
         }
         started = true
         if (force && shown != null) { refreshing = true; refreshError = null }
+        // A new (non-refresh) load or a different title never shows the previous list (Requirement 1.5).
+        if (!refreshing || shown?.url?.let(CeliumDedup::key) != CeliumDedup.key(data.url)) recommendations = emptyList()
         model.load(activity, data.url, data.apiName, data.showFillers, data.dubStatus, data.start, loadTrailers = false)
     }
 
@@ -81,7 +83,16 @@ class CeliumDetailsFragment : BaseComposeFragment() {
         model.page.observe(viewLifecycleOwner) {
             page = it
             when (it) {
-                is Resource.Success -> { shown = it.value; refreshing = false; refreshError = null }
+                is Resource.Success -> {
+                    val previous = shown?.url
+                    if (previous != null && CeliumDedup.key(previous) != CeliumDedup.key(it.value.url)) {
+                        // Title changed: drop the old row and take only this title's list (Requirement 1.5).
+                        // ResultViewModel2.postPage posts recommendations before the page, so the
+                        // model value here already belongs to the new title.
+                        recommendations = model.recommendations.value.orEmpty()
+                    }
+                    shown = it.value; refreshing = false; refreshError = null
+                }
                 is Resource.Failure -> if (refreshing) { refreshing = false; refreshError = "Refresh failed. Showing the last loaded details." }
                 else -> Unit
             }
@@ -133,7 +144,11 @@ class CeliumDetailsFragment : BaseComposeFragment() {
         if (download) activity.navigate(R.id.navigation_downloads)
     }
 
-    /** Opens a recommendation's details the same way Home does (Requirement 9.4). */
+    /**
+     * Opens a recommendation's details the same way Home does (Requirement 9.4). The global
+     * results action has no launchSingleTop/popUpTo, so this pushes a new back-stack entry with
+     * its own fragment and fragment-scoped ResultViewModel2 (Requirement 1.5).
+     */
     private fun open(card: SearchResponse) = loadSearchResult(card, 0)
 
     @Composable
@@ -142,7 +157,8 @@ class CeliumDetailsFragment : BaseComposeFragment() {
         val seasonOptions = seasons.map { SelectorOption(it.first?.asString(context) ?: "Season ${it.second}") }
         val dubOptions = dubs.map { SelectorOption(it.first?.asString(context) ?: it.second.name) }
         val rangeOptions = ranges.map { SelectorOption(it.first?.asString(context) ?: "${it.second.startEpisode}–${it.second.endEpisode}") }
-        var showAllRecs by rememberSaveable { mutableStateOf(false) }
+        // Keyed by title so the "More like this" grid resets when the title changes (Requirement 1.5).
+        var showAllRecs by rememberSaveable(shown?.url) { mutableStateOf(false) }
         CeliumTheme {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column {

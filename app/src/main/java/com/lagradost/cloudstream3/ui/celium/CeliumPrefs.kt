@@ -46,4 +46,33 @@ object CeliumPrefs {
         prefs(context).edit { putBoolean(randomKey(context), value) }
         randomState.value = value
     }
+
+    private const val LAYOUT_SIZE_KEY = "celium_layout_size"
+    private val layoutSizeState = MutableStateFlow(CeliumLayoutSize.Medium)
+
+    // Strongly referenced: SharedPreferences holds listeners weakly.
+    private var layoutSizeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    /** Live value of the card Layout_Size (default Medium); updates without restart (Requirement 9). */
+    @Synchronized
+    fun layoutSize(context: Context): StateFlow<CeliumLayoutSize> {
+        if (layoutSizeListener == null) {
+            val prefs = prefs(context)
+            val l = SharedPreferences.OnSharedPreferenceChangeListener { p, changed ->
+                // changed == null means the prefs were cleared (API 30+).
+                if (changed == null || changed == LAYOUT_SIZE_KEY) {
+                    layoutSizeState.value = CeliumLayoutSize.fromKey(p.getString(LAYOUT_SIZE_KEY, null))
+                }
+            }
+            layoutSizeListener = l
+            prefs.registerOnSharedPreferenceChangeListener(l)
+            layoutSizeState.value = CeliumLayoutSize.fromKey(prefs.getString(LAYOUT_SIZE_KEY, null))
+        }
+        return layoutSizeState.asStateFlow()
+    }
+
+    fun setLayoutSize(context: Context, size: CeliumLayoutSize) {
+        prefs(context).edit { putString(LAYOUT_SIZE_KEY, size.key) }
+        layoutSizeState.value = size
+    }
 }
