@@ -17,4 +17,4 @@ Read [CELIUM_BUILD.md](CELIUM_BUILD.md). The Android application ID for this deb
 ## Compatibility
 Celium preserves Cloudstream's Android extension/extractor and media engine. Some inherited runtime classes, advanced dialogs and resources remain. The ordinary consumer routes use the new Celium screens. Source reliability and network access still depend on each external provider.
 
-[Upstream Cloudstream documentation](UPSTREAM_README.md) · [License](LICENSE) · [Current plan](PLAN.md)
+[License](LICENSE) · [Current plan](PLAN.md)
