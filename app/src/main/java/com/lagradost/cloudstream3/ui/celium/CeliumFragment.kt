@@ -40,6 +40,13 @@ open class CeliumFragment : BaseComposeFragment() {
             onOpen = { card, play ->
                 if (card is DataStoreHelper.ResumeWatchingResult) {
                     SearchHelper.handleSearchClickCallback(SearchClickCallback(SEARCH_ACTION_PLAY_FILE, requireView(), -1, card))
+                } else if (card.apiName == "PornGameHub" || card.url.contains("porngamehub", true)) {
+                    val intent = android.content.Intent(requireContext(), com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity::class.java).apply {
+                        putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_GAME_URL, card.url)
+                        putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_GAME_TITLE, card.name)
+                        putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_POSTER_URL, card.posterUrl)
+                    }
+                    startActivity(intent)
                 } else loadSearchResult(card, if (play) START_ACTION_RESUME_LATEST else 0)
             },
         )

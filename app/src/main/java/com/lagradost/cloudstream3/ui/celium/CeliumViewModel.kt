@@ -261,7 +261,7 @@ class CeliumViewModel : ViewModel() {
     private fun discardAdult() {
         if (adultDiscarded) return
         adultDiscarded = true
-        queryCache.keys.removeAll { it.first == CeliumSection.Adult }
+        queryCache.keys.removeAll { it.first == CeliumSection.Adult || it.first == CeliumSection.AdultGames }
         val adultSources = listOf(CeliumSources.curated(CeliumSection.Adult)) + CeliumSources.all.filter { it.adult }
         viewModelScope.launch(Dispatchers.IO) {
             try { adultSources.forEach {
@@ -279,7 +279,7 @@ class CeliumViewModel : ViewModel() {
     private fun syncSources(force: Boolean): Boolean {
         val adult = MainAPI.settingsForProvider.enableAdult
         if (adult) adultDiscarded = false else discardAdult()
-        if (!adult && _state.value.section == CeliumSection.Adult) {
+        if (!adult && (_state.value.section == CeliumSection.Adult || _state.value.section == CeliumSection.AdultGames)) {
             _state.value = _state.value.copy(shelves = emptyList(), results = emptyList(), resume = emptyList())
             select(CeliumSection.Movies, CeliumSources.selected(CeliumSection.Movies, getKey("celium_source_${CeliumSection.Movies.name}")))
             return true
@@ -342,7 +342,7 @@ class CeliumViewModel : ViewModel() {
 
     /** Opens a Section view; this always leaves Home. */
     fun selectSection(section: CeliumSection) {
-        if (section == CeliumSection.Adult && !MainAPI.settingsForProvider.enableAdult) return
+        if ((section == CeliumSection.Adult || section == CeliumSection.AdultGames) && !MainAPI.settingsForProvider.enableAdult) return
         if (!_state.value.home && section == _state.value.section) return
         select(section, CeliumSources.selected(section, getKey("celium_source_${section.name}")), home = false)
     }
@@ -554,6 +554,36 @@ class CeliumViewModel : ViewModel() {
         pageJobs.clear()
         val current = _state.value
         val sourceId = current.source.id
+        if (current.section == CeliumSection.AdultGames) {
+            bindWatchdog?.cancel()
+            _state.value = current.copy(
+                busy = true,
+                binding = BindStatus.Ready,
+                slots = emptyList(),
+                slotStatus = emptyMap(),
+                remainingSections = 0,
+                feedError = null,
+                message = null
+            )
+            feedJob = gated(GATE_FEED, { generation = it }) { token ->
+                try {
+                    val shelves = com.lagradost.cloudstream3.ui.celium.game.CeliumGameRepository.getMainPage(sourceId, 1)
+                    if (!live(token, sourceId)) return@gated
+                    if (shelves.isNotEmpty()) {
+                        _state.value = _state.value.copy(shelves = shelves, busy = false, feedError = null, message = null)
+                    } else {
+                        _state.value = _state.value.copy(shelves = emptyList(), busy = false, message = "No games feed returned. Check network connection or try search.")
+                    }
+                } catch (e: CancellationException) { throw e
+                } catch (e: Exception) {
+                    logError(e)
+                    if (live(token, sourceId)) {
+                        _state.value = _state.value.copy(busy = false, feedError = "Adult Games feed could not load. Tap to retry.")
+                    }
+                }
+            }
+            return
+        }
         val curated = sourceId == "celium"
         val pool: List<Pair<CeliumSource, MainAPI>> = if (curated) curatedProviders(current.section)
             else CeliumSources.resolve(current.source, providers())?.let { listOf(current.source to it) }.orEmpty()
@@ -642,6 +672,31 @@ class CeliumViewModel : ViewModel() {
         val target = current.shelves.firstOrNull { it.key == shelf.key } ?: return
         val status = current.page(target.key).status
         if (!target.hasNext || status == PageStatus.Loading || status == PageStatus.End || pageJobs[target.key]?.isActive == true) return
+        if (current.section == CeliumSection.AdultGames) {
+            val key = target.key
+            val token = generation
+            setPage(key, ListPaging(PageStatus.Loading))
+            pageJobs[key] = viewModelScope.launch {
+                try {
+                    val nextPage = target.page + 1
+                    val sid = target.sourceId?.takeIf { it.isNotBlank() } ?: current.source.id
+                    val nextShelves = com.lagradost.cloudstream3.ui.celium.game.CeliumGameRepository.getMainPage(sid, nextPage)
+                    val matching = nextShelves.firstOrNull { it.sectionIndex == target.sectionIndex }
+                    if (matching != null && matching.cards.isNotEmpty()) {
+                        val merged = CeliumPaging.append(target.cards, matching.cards) { it.url }
+                        val replacement = target.copy(cards = merged.items, page = nextPage, hasNext = matching.hasNext)
+                        _state.value = _state.value.copy(shelves = _state.value.shelves.map { if (it.key == key) replacement else it })
+                        setPage(key, ListPaging(if (matching.hasNext) PageStatus.Idle else PageStatus.End))
+                    } else {
+                        setPage(key, ListPaging(PageStatus.End))
+                    }
+                } catch (e: Exception) {
+                    logError(e)
+                    setPage(key, ListPaging(PageStatus.Error))
+                }
+            }
+            return
+        }
         val api = target.sourceId?.let { catalogApis[it] } ?: boundApi?.takeIf { current.source.id != "celium" } ?: return
         val repository = repo(api)
         val sourceId = current.source.id
@@ -708,6 +763,35 @@ class CeliumViewModel : ViewModel() {
             searched = false, searchPage = 1, searchHasNext = false, searchError = null,
             pages = current.pages - CeliumState.SEARCH)
         if (query.length < 2) return
+        if (current.section == CeliumSection.AdultGames) {
+            searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
+                delay(350)
+                if (!liveSearch(token, sourceId)) return@gated
+                val local = withContext(Dispatchers.Default) {
+                    SearchRanking.rank(query, current.shelves.flatMap { it.cards })
+                        .filter { SearchRanking.score(query, it.name) > 0 }.map(CeliumTile::from)
+                }
+                if (!liveSearch(token, sourceId)) return@gated
+                _state.value = _state.value.copy(results = local)
+                try {
+                    val remote = com.lagradost.cloudstream3.ui.celium.game.CeliumGameRepository.search(sourceId, query, 1)
+                    if (!liveSearch(token, sourceId)) return@gated
+                    val merged = (local + remote).distinctBy { it.url }
+                    _state.value = _state.value.copy(
+                        results = merged,
+                        searching = false,
+                        searched = true,
+                        searchError = if (merged.isEmpty()) "No games matching \"$query\" found." else null
+                    )
+                } catch (e: Exception) {
+                    logError(e)
+                    if (liveSearch(token, sourceId)) {
+                        _state.value = _state.value.copy(searching = false, searched = true, searchError = if (local.isEmpty()) "Game search failed." else null)
+                    }
+                }
+            }
+            return
+        }
         val api = searchApi(current)
         searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
             delay(350)

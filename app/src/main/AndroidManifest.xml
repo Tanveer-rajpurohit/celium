@@ -161,6 +161,19 @@
             android:supportsPictureInPicture="true" />
 
         <activity
+            android:name=".ui.celium.game.CeliumGameActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:hardwareAccelerated="true"
+            android:exported="false"
+            android:resizeableActivity="true" />
+
+        <activity
+            android:name=".ui.celium.game.CeliumGameDetailActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:exported="false"
+            android:resizeableActivity="true" />
+
+        <activity
             android:name=".ui.account.AccountSelectActivity2"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
             android:exported="true">

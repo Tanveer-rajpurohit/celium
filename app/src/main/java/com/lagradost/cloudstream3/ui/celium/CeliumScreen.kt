@@ -110,7 +110,7 @@ fun CeliumScreen(
                     LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                         // Home is the first tab (Req 3); other tabs leave Home via selectSection.
                         item(key = "home") { CategoryTab("Home", state.home, onHome) }
-                        items(CeliumSection.entries.filter { state.adultEnabled || it != CeliumSection.Adult }, key = { it.name }) { section ->
+                        items(CeliumSection.entries.filter { state.adultEnabled || (it != CeliumSection.Adult && it != CeliumSection.AdultGames) }, key = { it.name }) { section ->
                             CategoryTab(section.label, !state.home && state.section == section) { onSection(section) }
                         }
                     }

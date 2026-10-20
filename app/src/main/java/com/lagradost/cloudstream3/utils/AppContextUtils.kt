@@ -755,6 +755,15 @@ object AppContextUtils {
         startAction: Int = 0,
         startValue: Int? = null,
     ) {
+        if (card.apiName == "PornGameHub" || card.url.contains("porngamehub", true)) {
+            val intent = android.content.Intent(this, com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity::class.java).apply {
+                putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_GAME_URL, card.url)
+                putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_GAME_TITLE, card.name)
+                putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_POSTER_URL, card.posterUrl)
+            }
+            this?.startActivity(intent)
+            return
+        }
         this?.runOnUiThread {
             // viewModelStore.clear()
             this.navigate(

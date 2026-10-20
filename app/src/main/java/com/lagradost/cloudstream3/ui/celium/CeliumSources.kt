@@ -12,7 +12,7 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 
 enum class CeliumSection(val label: String) {
-    Movies("Movies"), Series("TV Shows"), Anime("Anime"), Adult("Adult")
+    Movies("Movies"), Series("TV Shows"), Anime("Anime"), Adult("Adult"), AdultGames("Adult Games")
 }
 
 data class CeliumSource(
@@ -90,14 +90,21 @@ object CeliumSources {
         ready.invoke(false)
     }
 
-    fun curated(section: CeliumSection) = CeliumSource("celium", "Celium Feed", "", "", adult = section == CeliumSection.Adult, anime = section == CeliumSection.Anime)
+    fun curated(section: CeliumSection) = CeliumSource(
+        "celium", "Celium Feed", "", "",
+        adult = section == CeliumSection.Adult || section == CeliumSection.AdultGames,
+        anime = section == CeliumSection.Anime
+    )
 
-    fun choices(section: CeliumSection): List<CeliumSource> = listOf(curated(section)) + all.filter { enabled(it) &&
-        when (section) {
-            CeliumSection.Adult -> it.adult
-            CeliumSection.Anime -> it.anime
-            else -> !it.adult && !it.anime
-        }
+    fun choices(section: CeliumSection): List<CeliumSource> = when (section) {
+        CeliumSection.AdultGames -> listOf(
+            curated(section),
+            CeliumSource("itch_adult", "Itch.io Adult", "ItchAdult", "", adult = true),
+            CeliumSource("porngamehub", "PornGameHub", "PornGameHub", "", adult = true)
+        )
+        CeliumSection.Adult -> listOf(curated(section)) + all.filter { enabled(it) && it.adult }
+        CeliumSection.Anime -> listOf(curated(section)) + all.filter { enabled(it) && it.anime }
+        else -> listOf(curated(section)) + all.filter { enabled(it) && !it.adult && !it.anime }
     }
 
     fun selected(section: CeliumSection, savedId: String?): CeliumSource =
@@ -127,6 +134,7 @@ object CeliumSources {
     }
 
     fun accepts(section: CeliumSection, type: TvType?): Boolean = when (section) {
+        CeliumSection.AdultGames -> type == TvType.NSFW || type == null
         CeliumSection.Adult -> type == TvType.NSFW || type == null
         CeliumSection.Movies -> type == TvType.Movie || type == null
         CeliumSection.Series -> type == TvType.TvSeries || type == TvType.AsianDrama || type == null
