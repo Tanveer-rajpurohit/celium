@@ -19,12 +19,22 @@ object CeliumGameRepository {
             "adultgamesworld" -> AdultGamesWorldProvider.getMainPage(page)
             "porngamehub", "porngameshub" -> PornGameHubProvider.getMainPage(page)
             else -> {
-                // Curated Celium Feed: concurrently fetch both providers and combine
+                // Curated Celium Feed: concurrently fetch top flagship categories from both providers
                 val pghDeferred = async {
-                    try { PornGameHubProvider.getMainPage(page) } catch (e: Exception) { logError(e); emptyList() }
+                    try {
+                        PornGameHubProvider.getCuratedShelves(page)
+                    } catch (e: Exception) {
+                        logError(e)
+                        emptyList()
+                    }
                 }
                 val agwDeferred = async {
-                    try { AdultGamesWorldProvider.getMainPage(page) } catch (e: Exception) { logError(e); emptyList() }
+                    try {
+                        AdultGamesWorldProvider.getMainPage(page)
+                    } catch (e: Exception) {
+                        logError(e)
+                        emptyList()
+                    }
                 }
 
                 val pghShelves = pghDeferred.await()
@@ -59,7 +69,7 @@ object CeliumGameRepository {
 
     suspend fun loadGame(url: String): CeliumGameTile? = withContext(Dispatchers.IO) {
         when {
-            url.contains("adultgamesworld.com", ignoreCase = true) -> AdultGamesWorldProvider.loadGame(url)
+            url.contains("adultgamesworld", ignoreCase = true) -> AdultGamesWorldProvider.loadGame(url)
             else -> PornGameHubProvider.loadGame(url)
         }
     }

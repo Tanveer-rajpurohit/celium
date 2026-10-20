@@ -120,8 +120,15 @@ class CeliumGameDetailActivity : ComponentActivity() {
     @Composable
     private fun GameDetailScreenContent() {
         var isLoading by remember { mutableStateOf(true) }
-        var gameTile by remember { mutableStateOf<CeliumGameTile?>(null) }
-        var errorMessage by remember { mutableStateOf<String?>(null) }
+        var gameTile by remember {
+            mutableStateOf<CeliumGameTile?>(
+                CeliumGameTile(
+                    name = initialTitle,
+                    url = gameUrl,
+                    posterUrl = initialPoster
+                )
+            )
+        }
         var previewImage by remember { mutableStateOf<String?>(null) }
         var importDialogOpen by remember { mutableStateOf(false) }
         var importInputText by remember { mutableStateOf("") }
@@ -130,16 +137,12 @@ class CeliumGameDetailActivity : ComponentActivity() {
 
         fun fetchGameDetails() {
             isLoading = true
-            errorMessage = null
             scope.launch {
                 val loaded = CeliumGameRepository.loadGame(gameUrl)
                 if (loaded != null) {
                     gameTile = loaded
-                    isLoading = false
-                } else {
-                    errorMessage = "Failed to load story game details. Check your network connection."
-                    isLoading = false
                 }
+                isLoading = false
             }
         }
 
@@ -167,39 +170,21 @@ class CeliumGameDetailActivity : ComponentActivity() {
                 CeliumRefreshButton(onClick = { fetchGameDetails() }, enabled = !isLoading)
             }
 
-            if (isLoading && gameTile == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
-            } else if (errorMessage != null && gameTile == null) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = errorMessage ?: "Unknown error",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { fetchGameDetails() }) {
-                            Text("Retry")
-                        }
-                        OutlinedButton(onClick = { launchGame(gameUrl, initialTitle) }) {
-                            Text("Play Directly")
-                        }
-                    }
-                }
-            } else {
-                val current = gameTile ?: CeliumGameTile(
-                    name = initialTitle,
-                    url = gameUrl,
-                    posterUrl = initialPoster
+            if (isLoading) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.Transparent
                 )
+            }
+
+            val current = gameTile ?: CeliumGameTile(
+                name = initialTitle,
+                url = gameUrl,
+                posterUrl = initialPoster
+            )
 
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -570,7 +555,6 @@ class CeliumGameDetailActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
 
             // Fullscreen Screenshot Preview Dialog
             previewImage?.let { imgUrl ->

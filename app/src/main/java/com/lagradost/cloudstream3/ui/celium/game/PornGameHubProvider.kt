@@ -7,6 +7,8 @@ import com.lagradost.cloudstream3.ui.celium.CeliumShelf
 import com.lagradost.cloudstream3.ui.celium.CeliumTile
 import com.lagradost.cloudstream3.TvType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -14,12 +16,12 @@ import org.jsoup.nodes.Document
 
 /**
  * Live game catalog provider for PornGamesHub (https://porngameshub.com).
- * Strictly dynamic: parses live web DOM and embedded JSON payload, never serves mock games.
- * Extracts direct HTML5 iframe runtimes, high-res galleries, story overviews, and save-state hooks.
+ * High-performance parallel async fetching, deep category coverage, direct HTML5 iframe runtimes,
+ * rich galleries, story overviews, and save-state hooks.
  */
 object PornGameHubProvider {
     const val MAIN_URL = "https://porngameshub.com"
-    private const val REQUEST_TIMEOUT = 12_000L
+    private const val REQUEST_TIMEOUT = 10_000L
 
     val headers = mapOf(
         "User-Agent" to USER_AGENT,
@@ -42,12 +44,26 @@ object PornGameHubProvider {
         CategorySpec("pgh_updated", "Recently Updated", "/updated"),
         CategorySpec("pgh_best", "Top Rated", "/best"),
         CategorySpec("pgh_new", "New Releases", "/new"),
+        CategorySpec("pgh_cheating", "Cheating Stories", "/cheating"),
+        CategorySpec("pgh_female_lead", "Female Protagonist", "/female-protagonist"),
+        CategorySpec("pgh_male_lead", "Male Protagonist & Harem", "/harem"),
+        CategorySpec("pgh_erotic", "Erotic & Romance", "/erotic"),
+        CategorySpec("pgh_dating", "Dating Simulation", "/dating"),
+        CategorySpec("pgh_milf", "MILF Stories", "/milf"),
         CategorySpec("pgh_vn", "Visual Novels", "/visual-novels"),
         CategorySpec("pgh_3d", "3D Games", "/3d"),
         CategorySpec("pgh_2d", "2D Games", "/2d"),
-        CategorySpec("pgh_adventure", "Adventure", "/adventure"),
-        CategorySpec("pgh_choice", "Choice & Dating", "/choice"),
-        CategorySpec("pgh_action", "Action", "/action")
+        CategorySpec("pgh_rpg", "RPG & Adventure", "/rpg"),
+        CategorySpec("pgh_parody", "Parody Games", "/parody")
+    )
+
+    // Curated flagship selection for ultra-fast Celium Feed loading
+    private val curatedCategories = listOf(
+        CategorySpec("pgh_popular", "Popular Games", "/popular"),
+        CategorySpec("pgh_updated", "Recently Updated", "/updated"),
+        CategorySpec("pgh_best", "Top Rated", "/best"),
+        CategorySpec("pgh_cheating", "Cheating Stories", "/cheating"),
+        CategorySpec("pgh_vn", "Visual Novels", "/visual-novels")
     )
 
     /**
@@ -128,7 +144,6 @@ object PornGameHubProvider {
             val ratingText = elem.selectFirst(".item-icons span.text-yellow-400, .item-icons span[class*='star']")?.text()?.trim()
             val previewDesc = elem.selectFirst(".preview-hover p")?.text()?.trim().orEmpty()
 
-            // Extract engine tag if discernible from title or description
             val engine = when {
                 rawTitle.contains("Ren'Py", true) || previewDesc.contains("Ren'Py", true) -> "Ren'Py Web"
                 rawTitle.contains("Twine", true) || previewDesc.contains("Twine", true) -> "Twine"
@@ -154,16 +169,15 @@ object PornGameHubProvider {
         return games.distinctBy { it.url }
     }
 
-    suspend fun getMainPage(page: Int = 1): List<CeliumShelf> = withContext(Dispatchers.IO) {
-        val shelves = mutableListOf<CeliumShelf>()
-        for ((index, cat) in categories.withIndex()) {
-            try {
-                val pageUrl = if (page > 1) "$MAIN_URL${cat.path}/$page" else "$MAIN_URL${cat.path}"
-                val doc = fetchHtmlDocument(pageUrl) ?: continue
-                val games = parseGameCards(doc)
-                if (games.isNotEmpty()) {
-                    val cards = games.map { CeliumTile.from(it) }
-                    shelves.add(
+    private suspend fun fetchShelves(specs: List<CategorySpec>, page: Int): List<CeliumShelf> = withContext(Dispatchers.IO) {
+        val deferredShelves = specs.mapIndexed { index, cat ->
+            async {
+                try {
+                    val pageUrl = if (page > 1) "$MAIN_URL${cat.path}/$page" else "$MAIN_URL${cat.path}"
+                    val doc = fetchHtmlDocument(pageUrl) ?: return@async null
+                    val games = parseGameCards(doc)
+                    if (games.isNotEmpty()) {
+                        val cards = games.map { CeliumTile.from(it) }
                         CeliumShelf(
                             key = "${cat.key}_$page",
                             title = cat.title,
@@ -173,14 +187,19 @@ object PornGameHubProvider {
                             hasNext = cards.size >= 12,
                             sourceId = "porngameshub"
                         )
-                    )
+                    } else null
+                } catch (e: Exception) {
+                    logError(e)
+                    null
                 }
-            } catch (e: Exception) {
-                logError(e)
             }
         }
-        shelves
+        deferredShelves.awaitAll().filterNotNull()
     }
+
+    suspend fun getMainPage(page: Int = 1): List<CeliumShelf> = fetchShelves(categories, page)
+
+    suspend fun getCuratedShelves(page: Int = 1): List<CeliumShelf> = fetchShelves(curatedCategories, page)
 
     suspend fun search(query: String, page: Int = 1): List<CeliumTile> = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
@@ -202,10 +221,9 @@ object PornGameHubProvider {
 
     suspend fun loadGame(url: String): CeliumGameTile? = withContext(Dispatchers.IO) {
         try {
-            val doc = fetchHtmlDocument(url) ?: return@withContext null
-            val pageHtml = doc.html()
+            val doc = fetchHtmlDocument(url)
+            val pageHtml = doc?.html().orEmpty()
 
-            // 1. Parse window.__INIT_DATA__['TheGame'] JSON
             var jsonTitle: String? = null
             var jsonIframe: String? = null
             var jsonViews: Long? = null
@@ -241,13 +259,13 @@ object PornGameHubProvider {
             }
 
             val title = jsonTitle
-                ?: doc.selectFirst("h1")?.text()?.trim()
-                ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-                ?: return@withContext null
+                ?: doc?.selectFirst("h1")?.text()?.trim()
+                ?: doc?.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                ?: doc?.title()?.substringBefore("|")?.trim()
+                ?: url.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
 
-            // 2. Parse story description with clean preserved paragraphs
             val descBuilder = StringBuilder()
-            val descHeading = doc.selectFirst("h2:contains(Description), h2:contains(About)")
+            val descHeading = doc?.selectFirst("h2:contains(Description), h2:contains(About)")
             if (descHeading != null) {
                 var sibling = descHeading.nextElementSibling()
                 while (sibling != null && !sibling.tagName().startsWith("h", ignoreCase = true)) {
@@ -263,7 +281,7 @@ object PornGameHubProvider {
             }
 
             if (descBuilder.isBlank()) {
-                val descElem = doc.selectFirst(".game-description, #description, .entry-content, .description")
+                val descElem = doc?.selectFirst(".game-description, #description, .entry-content, .description")
                 descElem?.let { elem ->
                     elem.select("script, style, iframe, noscript, .tags, .buttons, .share-buttons").remove()
                     val text = elem.wholeText().lineSequence()
@@ -275,19 +293,17 @@ object PornGameHubProvider {
             }
 
             val desc = descBuilder.toString().ifBlank {
-                doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
+                doc?.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
             }
 
-            // 3. Parse poster image
             val poster = jsonImages.firstOrNull()
-                ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
-                ?: doc.selectFirst(".game-poster img, .thumbnail img, img.cover")?.attr("src")?.trim()
+                ?: doc?.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+                ?: doc?.selectFirst(".game-poster img, .thumbnail img, img.cover")?.attr("src")?.trim()
 
-            // 4. Parse full screenshots gallery
             val screenshots = mutableListOf<String>()
             screenshots.addAll(jsonImages)
 
-            val domScreenshots = doc.select("img[data-src*='/uploads/public/'], a[href*='/uploads/public/']")
+            val domScreenshots = doc?.select("img[data-src*='/uploads/public/'], a[href*='/uploads/public/']") ?: emptyList()
             val badKeywords = listOf("logo", "avatar", "icon", "banner", "advert", "button", "play-icon")
             for (elem in domScreenshots) {
                 val rawSrc = elem.attr("data-src").ifBlank { elem.attr("href") }.trim()
@@ -299,39 +315,32 @@ object PornGameHubProvider {
                 }
             }
 
-            // 5. Developer and Studio
             var author: String? = null
-            val devHeading = doc.selectFirst("h2:contains(Developer)")
+            val devHeading = doc?.selectFirst("h2:contains(Developer)")
             if (devHeading != null) {
                 author = devHeading.nextElementSibling()?.selectFirst("h3, a, p")?.text()?.trim()
             }
             if (author.isNullOrBlank()) {
-                author = doc.selectFirst(".developer, .author, a[href*='/developer/']")?.text()?.trim()
+                author = doc?.selectFirst(".developer, .author, a[href*='/developer/']")?.text()?.trim()
             }
 
-            // 6. Tags and Genres
-            val tagElements = doc.select("h2:contains(Tags) ~ a, .tags a, .genres a, a[href^='/']")
-                .filter { it.attr("href").count { c -> c == '/' } == 1 } // single path segment like /visual-novels
+            val tagElements = doc?.select("h2:contains(Tags) ~ a, .tags a, .genres a, a[href^='/']")
+                ?.filter { it.attr("href").count { c -> c == '/' } == 1 } ?: emptyList()
             val tags = tagElements.map { it.text().trim() }.filter { it.isNotBlank() && it.length < 30 }.distinct()
 
-            // 7. Walkthrough PDF link
-            val guideLink = doc.selectFirst("a[href*='.pdf']")?.attr("href")?.trim()?.let { cleanUrl(it) }
+            val guideLink = doc?.selectFirst("a[href*='.pdf']")?.attr("href")?.trim()?.let { cleanUrl(it) }
 
-            // 8. Views and dates formatting
             val viewsStr = jsonViews?.let {
                 when {
                     it >= 1_000_000 -> String.format("%.1fM views", it / 1_000_000.0)
                     it >= 1_000 -> String.format("%.1fK views", it / 1_000.0)
                     else -> "$it views"
                 }
-            } ?: doc.selectFirst("*:matchesOwn(Views:)")?.text()?.trim()
+            } ?: doc?.selectFirst("*:matchesOwn(Views:)")?.text()?.trim()
 
-            val updatedStr = jsonUpgraded ?: doc.selectFirst("*:matchesOwn(updated on)")?.text()?.trim()
+            val updatedStr = jsonUpgraded ?: doc?.selectFirst("*:matchesOwn(updated on)")?.text()?.trim()
+            val ratingVal = doc?.selectFirst("*:matchesOwn(Rating:)")?.text()?.trim()?.substringAfter("Rating:")?.trim()
 
-            val ratingVal = doc.selectFirst("*:matchesOwn(Rating:)")?.text()?.trim()
-                ?.substringAfter("Rating:")?.trim()
-
-            // 9. Play URL
             val playUrl = jsonIframe?.let { cleanUrl(it) } ?: url
 
             val engine = when {
@@ -364,7 +373,14 @@ object PornGameHubProvider {
             )
         } catch (e: Exception) {
             logError(e)
-            null
+            // Even if an unexpected parsing exception occurs, return a valid playable tile
+            CeliumGameTile(
+                name = url.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() },
+                url = url,
+                apiName = "PornGamesHub",
+                type = TvType.NSFW,
+                playUrl = url
+            )
         }
     }
 }

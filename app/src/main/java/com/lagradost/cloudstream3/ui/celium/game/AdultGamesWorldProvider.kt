@@ -7,17 +7,20 @@ import com.lagradost.cloudstream3.ui.celium.CeliumShelf
 import com.lagradost.cloudstream3.ui.celium.CeliumTile
 import com.lagradost.cloudstream3.TvType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
 /**
  * Live game catalog provider for AdultGamesWorld (https://adultgamesworld.com).
- * Specializes in Android, Ren'Py, PC narrative and visual novel releases.
+ * Specializes in Android, Ren'Py, PC narrative, and visual novel releases.
+ * Uses high-performance parallel async fetching.
  */
 object AdultGamesWorldProvider {
     const val MAIN_URL = "https://adultgamesworld.com"
-    private const val REQUEST_TIMEOUT = 12_000L
+    private const val REQUEST_TIMEOUT = 10_000L
 
     val headers = mapOf(
         "User-Agent" to USER_AGENT,
@@ -29,7 +32,8 @@ object AdultGamesWorldProvider {
 
     val categories = listOf(
         CategorySpec("agw_latest", "Latest Adult Games", ""),
-        CategorySpec("agw_android", "Android Games", "/category/android"),
+        CategorySpec("agw_android", "Android Releases", "/category/android"),
+        CategorySpec("agw_cheating", "Cheating Stories", "/tag/cheating"),
         CategorySpec("agw_windows", "Windows PC Games", "/category/windows"),
         CategorySpec("agw_mac", "Mac OS Games", "/category/mac")
     )
@@ -88,20 +92,16 @@ object AdultGamesWorldProvider {
 
             val img = elem.selectFirst(".forimg img, img")
             val rawImg = img?.attr("src")?.ifBlank { img.attr("data-src") }?.trim().orEmpty()
-            // Enhance image resolution by stripping thumbnail crop suffix
             val posterUrl = if (rawImg.isNotBlank()) {
                 cleanUrl(rawImg.replace(Regex("""-\d+x\d+(?=\.\w+$)"""), ""))
             } else null
 
-            // Extract developer from brackets like [Eroshi] or [DS23Games]
             val devMatch = Regex("""\[([^\]]+)\]""").find(rawTitle)
             val author = devMatch?.groupValues?.get(1)?.trim()
 
-            // Extract version from title
             val verMatch = Regex("""(?:v|Version|Ver)\s*([\d\.]+)""", RegexOption.IGNORE_CASE).find(rawTitle)
             val version = verMatch?.groupValues?.get(1)?.trim()
 
-            // Extract date
             val dateText = elem.ownText().trim().ifBlank {
                 elem.selectFirst(".posted-on, .date, time")?.text()?.trim().orEmpty()
             }
@@ -125,19 +125,18 @@ object AdultGamesWorldProvider {
     }
 
     suspend fun getMainPage(page: Int = 1): List<CeliumShelf> = withContext(Dispatchers.IO) {
-        val shelves = mutableListOf<CeliumShelf>()
-        for ((index, cat) in categories.withIndex()) {
-            try {
-                val pageUrl = if (page > 1) {
-                    if (cat.path.isBlank()) "$MAIN_URL/page/$page/" else "$MAIN_URL${cat.path}/page/$page/"
-                } else {
-                    if (cat.path.isBlank()) "$MAIN_URL/" else "$MAIN_URL${cat.path}/"
-                }
-                val doc = fetchHtmlDocument(pageUrl) ?: continue
-                val games = parseGameCards(doc)
-                if (games.isNotEmpty()) {
-                    val cards = games.map { CeliumTile.from(it) }
-                    shelves.add(
+        val deferredShelves = categories.mapIndexed { index, cat ->
+            async {
+                try {
+                    val pageUrl = if (page > 1) {
+                        if (cat.path.isBlank()) "$MAIN_URL/page/$page/" else "$MAIN_URL${cat.path}/page/$page/"
+                    } else {
+                        if (cat.path.isBlank()) "$MAIN_URL/" else "$MAIN_URL${cat.path}/"
+                    }
+                    val doc = fetchHtmlDocument(pageUrl) ?: return@async null
+                    val games = parseGameCards(doc)
+                    if (games.isNotEmpty()) {
+                        val cards = games.map { CeliumTile.from(it) }
                         CeliumShelf(
                             key = "${cat.key}_$page",
                             title = cat.title,
@@ -147,13 +146,14 @@ object AdultGamesWorldProvider {
                             hasNext = cards.size >= 8,
                             sourceId = "adultgamesworld"
                         )
-                    )
+                    } else null
+                } catch (e: Exception) {
+                    logError(e)
+                    null
                 }
-            } catch (e: Exception) {
-                logError(e)
             }
         }
-        shelves
+        deferredShelves.awaitAll().filterNotNull()
     }
 
     suspend fun search(query: String, page: Int = 1): List<CeliumTile> = withContext(Dispatchers.IO) {
@@ -176,14 +176,14 @@ object AdultGamesWorldProvider {
 
     suspend fun loadGame(url: String): CeliumGameTile? = withContext(Dispatchers.IO) {
         try {
-            val doc = fetchHtmlDocument(url) ?: return@withContext null
-            val title = doc.selectFirst("h1.entry-title, h1, .title")?.text()?.trim()
-                ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-                ?: return@withContext null
+            val doc = fetchHtmlDocument(url)
+            val title = doc?.selectFirst("h1.entry-title, h1, .title")?.text()?.trim()
+                ?: doc?.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                ?: doc?.title()?.substringBefore("|")?.trim()
+                ?: url.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
 
-            val contentElem = doc.selectFirst(".entry-content, article .content, .post-content")
+            val contentElem = doc?.selectFirst(".entry-content, article .content, .post-content")
 
-            // Collect story text
             val descBuilder = StringBuilder()
             val paragraphs = contentElem?.select("p") ?: emptyList()
             for (p in paragraphs) {
@@ -194,10 +194,9 @@ object AdultGamesWorldProvider {
                 }
             }
             val desc = descBuilder.toString().ifBlank {
-                doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
+                doc?.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
             }
 
-            // Collect gallery images
             val screenshots = mutableListOf<String>()
             val imgElements = contentElem?.select("img") ?: emptyList()
             for (img in imgElements) {
@@ -209,7 +208,7 @@ object AdultGamesWorldProvider {
             }
 
             val poster = screenshots.firstOrNull()
-                ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+                ?: doc?.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
 
             val devMatch = Regex("""\[([^\]]+)\]""").find(title)
             val author = devMatch?.groupValues?.get(1)?.trim()
@@ -217,11 +216,10 @@ object AdultGamesWorldProvider {
             val verMatch = Regex("""(?:v|Version|Ver)\s*([\d\.]+)""", RegexOption.IGNORE_CASE).find(title)
             val version = verMatch?.groupValues?.get(1)?.trim()
 
-            val dateText = doc.selectFirst(".posted-on, .date, time")?.text()?.trim()
+            val dateText = doc?.selectFirst(".posted-on, .date, time")?.text()?.trim()
 
-            val tags = doc.select(".tags a, .tag-links a, .cat-links a").map { it.text().trim() }.filter { it.isNotBlank() }
+            val tags = doc?.select(".tags a, .tag-links a, .cat-links a")?.map { it.text().trim() }?.filter { it.isNotBlank() } ?: emptyList()
 
-            // Download or play links
             val actionLink = contentElem?.selectFirst("a[href*='mega'], a[href*='drive'], a[href*='download'], a[href*='f95'], a.btn")?.attr("href")?.trim()
 
             CeliumGameTile(
@@ -242,7 +240,13 @@ object AdultGamesWorldProvider {
             )
         } catch (e: Exception) {
             logError(e)
-            null
+            CeliumGameTile(
+                name = url.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() },
+                url = url,
+                apiName = "AdultGamesWorld",
+                type = TvType.NSFW,
+                playUrl = url
+            )
         }
     }
 }
