@@ -99,8 +99,8 @@ object CeliumSources {
     fun choices(section: CeliumSection): List<CeliumSource> = when (section) {
         CeliumSection.AdultGames -> listOf(
             curated(section),
-            CeliumSource("itch_adult", "Itch.io Adult", "ItchAdult", "", adult = true),
-            CeliumSource("porngamehub", "PornGameHub", "PornGameHub", "", adult = true)
+            CeliumSource("porngameshub", "PornGamesHub", "PornGamesHub", "", adult = true, aliases = setOf("porngamehub", "PornGameHub")),
+            CeliumSource("adultgamesworld", "AdultGamesWorld", "AdultGamesWorld", "", adult = true)
         )
         CeliumSection.Adult -> listOf(curated(section)) + all.filter { enabled(it) && it.adult }
         CeliumSection.Anime -> listOf(curated(section)) + all.filter { enabled(it) && it.anime }

@@ -11,7 +11,7 @@ import kotlinx.serialization.Transient
 data class CeliumGameTile(
     override val name: String,
     override val url: String,
-    override val apiName: String = "PornGameHub",
+    override val apiName: String = "PornGamesHub",
     override var type: TvType? = TvType.NSFW,
     override var posterUrl: String? = null,
     override var posterHeaders: Map<String, String>? = null,
@@ -22,6 +22,10 @@ data class CeliumGameTile(
     val version: String? = null,
     val tags: List<String> = emptyList(),
     val screenshots: List<String> = emptyList(),
+    val updatedAt: String? = null,
+    val views: String? = null,
+    val rating: String? = null,
+    val guideUrl: String? = null,
 ) : SearchResponse {
     @Transient override var id: Int? = null
     @Transient override var quality: SearchQuality? = null

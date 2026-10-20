@@ -8,16 +8,18 @@ import com.lagradost.cloudstream3.ui.celium.CeliumTile
 import com.lagradost.cloudstream3.TvType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
 /**
- * Live game catalog provider for PornGameHub.
- * Strictly dynamic: parses live web DOM, never serves hardcoded or fake games.
- * Extracts metadata, story descriptions, preview screenshots, and direct play iframes.
+ * Live game catalog provider for PornGamesHub (https://porngameshub.com).
+ * Strictly dynamic: parses live web DOM and embedded JSON payload, never serves mock games.
+ * Extracts direct HTML5 iframe runtimes, high-res galleries, story overviews, and save-state hooks.
  */
 object PornGameHubProvider {
-    const val MAIN_URL = "https://www.porngamehub.com"
-    private const val REQUEST_TIMEOUT = 8_000L
+    const val MAIN_URL = "https://porngameshub.com"
+    private const val REQUEST_TIMEOUT = 12_000L
 
     val headers = mapOf(
         "User-Agent" to USER_AGENT,
@@ -36,11 +38,51 @@ object PornGameHubProvider {
     data class CategorySpec(val key: String, val title: String, val path: String)
 
     val categories = listOf(
-        CategorySpec("pgh_popular", "Popular Story Games", "/games?sort=popular"),
-        CategorySpec("pgh_new", "Latest Releases", "/games?sort=new"),
-        CategorySpec("pgh_visual_novels", "Visual Novels", "/games/tag/visual-novel"),
-        CategorySpec("pgh_rpg", "RPG & Adventure", "/games/tag/rpg")
+        CategorySpec("pgh_popular", "Popular Games", "/popular"),
+        CategorySpec("pgh_updated", "Recently Updated", "/updated"),
+        CategorySpec("pgh_best", "Top Rated", "/best"),
+        CategorySpec("pgh_new", "New Releases", "/new"),
+        CategorySpec("pgh_vn", "Visual Novels", "/visual-novels"),
+        CategorySpec("pgh_3d", "3D Games", "/3d"),
+        CategorySpec("pgh_2d", "2D Games", "/2d"),
+        CategorySpec("pgh_adventure", "Adventure", "/adventure"),
+        CategorySpec("pgh_choice", "Choice & Dating", "/choice"),
+        CategorySpec("pgh_action", "Action", "/action")
     )
+
+    /**
+     * Resilient HTML fetcher: attempts direct connection first, with seamless fallback
+     * to proxy extraction if regional ISP DNS sinkholing or TCP resets occur.
+     */
+    private suspend fun fetchHtmlDocument(targetUrl: String): Document? = withContext(Dispatchers.IO) {
+        try {
+            val response = app.get(targetUrl, headers = headers, timeout = REQUEST_TIMEOUT)
+            if (response.code in 200..299 && response.text.length > 500) {
+                return@withContext response.document
+            }
+        } catch (directError: Exception) {
+            logError(directError)
+        }
+
+        // Mirror fallback for ISP-filtered networks
+        try {
+            val proxyUrl = "https://r.jina.ai/$targetUrl"
+            val fallbackResponse = app.get(
+                proxyUrl,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "X-Return-Format" to "html"
+                ),
+                timeout = REQUEST_TIMEOUT + 4_000L
+            )
+            if (fallbackResponse.text.length > 500) {
+                return@withContext Jsoup.parse(fallbackResponse.text, targetUrl)
+            }
+        } catch (fallbackError: Exception) {
+            logError(fallbackError)
+        }
+        null
+    }
 
     private fun cleanUrl(raw: String): String = when {
         raw.startsWith("http://") || raw.startsWith("https://") -> raw
@@ -52,7 +94,7 @@ object PornGameHubProvider {
     private fun parseGameCards(htmlDoc: Document): List<CeliumGameTile> {
         val games = mutableListOf<CeliumGameTile>()
         val cardElements = htmlDoc.select(
-            "div.game-card, div.game-item, div.thumb-item, div.game, article.game, div.item-game, div.grid-item"
+            "div.archive-item, div.single-gallery, .archive-list .single-gallery, div.game-card, div.game-item"
         )
 
         for (elem in cardElements) {
@@ -60,21 +102,21 @@ object PornGameHubProvider {
             val href = link.attr("href").trim()
             val fullUrl = cleanUrl(href)
 
-            if (!fullUrl.contains("/game/") && !fullUrl.contains("/games/")) continue
+            if (fullUrl.isBlank() || fullUrl == MAIN_URL || fullUrl == "$MAIN_URL/") continue
 
-            val titleElem = elem.selectFirst("h2, h3, h4, .game-title, .title, .name") ?: link
-            val title = titleElem.text().trim().ifBlank {
+            val titleElem = elem.selectFirst(".item-content h4, h4, h3, h2, .title") ?: link
+            val rawTitle = titleElem.text().trim().ifBlank {
                 link.attr("title").trim().ifBlank {
                     elem.selectFirst("img")?.attr("alt")?.trim().orEmpty()
                 }
             }
-            if (title.isBlank()) continue
+            if (rawTitle.isBlank()) continue
 
-            val img = elem.selectFirst("img[data-src], img[data-original], img[data-lazy-src], img[src]")
+            val img = elem.selectFirst("img[data-src], source[data-srcset], img[data-original], img[src]")
             val posterUrl = img?.let {
                 val src = it.attr("data-src").ifBlank {
-                    it.attr("data-original").ifBlank {
-                        it.attr("data-lazy-src").ifBlank {
+                    it.attr("data-srcset").ifBlank {
+                        it.attr("data-original").ifBlank {
                             it.attr("src")
                         }
                     }
@@ -82,18 +124,30 @@ object PornGameHubProvider {
                 cleanUrl(src)
             }
 
-            val tagList = elem.select(".tags a, .tag, .genre, .badge").map { it.text().trim() }.filter { it.isNotBlank() }
+            val viewsText = elem.selectFirst(".item-icons span.text-primary, .item-icons span[class*='eye']")?.text()?.trim()
+            val ratingText = elem.selectFirst(".item-icons span.text-yellow-400, .item-icons span[class*='star']")?.text()?.trim()
+            val previewDesc = elem.selectFirst(".preview-hover p")?.text()?.trim().orEmpty()
+
+            // Extract engine tag if discernible from title or description
+            val engine = when {
+                rawTitle.contains("Ren'Py", true) || previewDesc.contains("Ren'Py", true) -> "Ren'Py Web"
+                rawTitle.contains("Twine", true) || previewDesc.contains("Twine", true) -> "Twine"
+                rawTitle.contains("Unity", true) || previewDesc.contains("Unity", true) -> "Unity WebGL"
+                else -> "HTML5"
+            }
 
             games.add(
                 CeliumGameTile(
-                    name = title,
+                    name = rawTitle,
                     url = fullUrl,
-                    apiName = "PornGameHub",
+                    apiName = "PornGamesHub",
                     type = TvType.NSFW,
                     posterUrl = posterUrl,
                     posterHeaders = mapOf("Referer" to MAIN_URL),
-                    engine = if (tagList.any { it.contains("Twine", true) }) "Twine" else "HTML5",
-                    tags = tagList
+                    engine = engine,
+                    description = previewDesc,
+                    views = viewsText?.let { "$it views" },
+                    rating = ratingText?.let { "$it ★" }
                 )
             )
         }
@@ -104,9 +158,9 @@ object PornGameHubProvider {
         val shelves = mutableListOf<CeliumShelf>()
         for ((index, cat) in categories.withIndex()) {
             try {
-                val pageUrl = if (page > 1) "$MAIN_URL${cat.path}&page=$page" else "$MAIN_URL${cat.path}"
-                val response = app.get(pageUrl, headers = headers, timeout = REQUEST_TIMEOUT)
-                val games = parseGameCards(response.document)
+                val pageUrl = if (page > 1) "$MAIN_URL${cat.path}/$page" else "$MAIN_URL${cat.path}"
+                val doc = fetchHtmlDocument(pageUrl) ?: continue
+                val games = parseGameCards(doc)
                 if (games.isNotEmpty()) {
                     val cards = games.map { CeliumTile.from(it) }
                     shelves.add(
@@ -117,7 +171,7 @@ object PornGameHubProvider {
                             sectionIndex = index,
                             page = page,
                             hasNext = cards.size >= 12,
-                            sourceId = "porngamehub"
+                            sourceId = "porngameshub"
                         )
                     )
                 }
@@ -132,9 +186,13 @@ object PornGameHubProvider {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@withContext emptyList()
         try {
-            val searchUrl = "$MAIN_URL/search?q=${cleanQuery.replace(" ", "+")}&page=$page"
-            val response = app.get(searchUrl, headers = headers, timeout = REQUEST_TIMEOUT)
-            val games = parseGameCards(response.document)
+            val searchUrl = if (page > 1) {
+                "$MAIN_URL/?search=${cleanQuery.replace(" ", "+")}&page=$page"
+            } else {
+                "$MAIN_URL/?search=${cleanQuery.replace(" ", "+")}"
+            }
+            val doc = fetchHtmlDocument(searchUrl) ?: return@withContext emptyList()
+            val games = parseGameCards(doc)
             games.map { CeliumTile.from(it) }
         } catch (e: Exception) {
             logError(e)
@@ -144,86 +202,151 @@ object PornGameHubProvider {
 
     suspend fun loadGame(url: String): CeliumGameTile? = withContext(Dispatchers.IO) {
         try {
-            val response = app.get(url, headers = headers, timeout = REQUEST_TIMEOUT)
-            val doc = response.document
+            val doc = fetchHtmlDocument(url) ?: return@withContext null
+            val pageHtml = doc.html()
 
-            val title = doc.selectFirst("h1.game-title, h1, .title")?.text()?.trim()
-                ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-                ?: return@withContext null
+            // 1. Parse window.__INIT_DATA__['TheGame'] JSON
+            var jsonTitle: String? = null
+            var jsonIframe: String? = null
+            var jsonViews: Long? = null
+            var jsonPublished: String? = null
+            var jsonUpgraded: String? = null
+            val jsonImages = mutableListOf<String>()
 
-            // Parse rich story overview with preserved paragraphs
-            val descElem = doc.selectFirst(
-                ".game-description, #description, .entry-content, .game-info, .description, div[itemprop='description'], .game-story, .story, div.about-game, div.game-details"
-            )
-            val desc = descElem?.let { elem ->
-                elem.select("script, style, iframe, noscript, .tags, .buttons, .share-buttons").remove()
-                elem.wholeText().lineSequence()
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .joinToString("\n\n")
-            }?.ifBlank { null }
-                ?: doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
+            val initPattern = Regex("""window\.__INIT_DATA__\['TheGame'\]\s*=\s*(\{.*?\});\s*(?:window|\n|<)""", RegexOption.DOT_MATCHES_ALL)
+            val match = initPattern.find(pageHtml)
+            if (match != null) {
+                try {
+                    val jsonStr = match.groupValues[1]
+                    val obj = JSONObject(jsonStr)
+                    jsonTitle = obj.optString("title").takeIf { it.isNotBlank() }
+                    jsonIframe = obj.optString("link_iframe").takeIf { it.isNotBlank() }
+                    jsonViews = obj.optLong("view_count", -1L).takeIf { it > 0 }
+                    jsonPublished = obj.optString("published_at").takeIf { it.isNotBlank() }
+                    jsonUpgraded = obj.optString("upgraded_at").takeIf { it.isNotBlank() }
 
-            val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
-                ?: doc.selectFirst(".game-poster img, .thumbnail img, img.cover")?.attr("src")?.trim()
-
-            // Parse screenshot gallery previews
-            val screenshotElements = doc.select(
-                ".game-screenshots img, .screenshots img, .gallery img, .slider img, .preview-images img, #screenshots a, div[class*='screenshot'] img, a[data-fancybox], a.gallery-item, div[class*='preview'] img, div.swiper-slide img, div.carousel img, div.game-media img"
-            )
-            val badKeywords = listOf("avatar", "icon", "logo", "banner", "advert", "button", "play-icon", "tracker", "facebook", "twitter", "discord")
-            val screenshots = screenshotElements.mapNotNull { elem ->
-                val rawSrc = elem.attr("data-full").ifBlank {
-                    elem.attr("data-highres").ifBlank {
-                        elem.attr("data-src").ifBlank {
-                            elem.attr("data-original").ifBlank {
-                                elem.attr("data-lazy-src").ifBlank {
-                                    elem.attr("src").ifBlank {
-                                        elem.attr("href")
-                                    }
-                                }
+                    val imagesArr = obj.optJSONArray("images")
+                    if (imagesArr != null) {
+                        for (i in 0 until imagesArr.length()) {
+                            val imgObj = imagesArr.optJSONObject(i)
+                            val imgUrl = imgObj?.optString("url")?.trim()
+                            if (!imgUrl.isNullOrBlank()) {
+                                jsonImages.add(cleanUrl(imgUrl))
                             }
                         }
                     }
-                }.trim()
-
-                if (rawSrc.isNotBlank() && badKeywords.none { rawSrc.contains(it, ignoreCase = true) }) {
-                    val clean = cleanUrl(rawSrc)
-                    if (clean.contains(".jpg", true) || clean.contains(".jpeg", true) || clean.contains(".png", true) || clean.contains(".webp", true) || clean.contains(".avif", true)) {
-                        clean
-                    } else null
-                } else null
-            }.distinct()
-
-            val author = doc.selectFirst(".developer, .author, .publisher, a[href*='/developer/'], a[href*='/author/']")?.text()?.trim()
-            val version = doc.selectFirst(".version, .game-version, span[class*='version']")?.text()?.trim()
-
-            // Locate direct iframe player or canvas link
-            val iframe = doc.selectFirst(
-                "iframe#game_frame, iframe#game-frame, iframe.game-player, iframe[src*='game'], iframe[src*='embed'], iframe[src*='play'], iframe[src*='html5'], iframe[data-src*='game'], iframe[data-src*='embed'], iframe[data-src*='play'], iframe[data-src*='html5'], div#game-container iframe, div.game-area iframe"
-            )
-            val rawIframeSrc = iframe?.let {
-                it.attr("src").ifBlank { it.attr("data-src") }
-            }?.trim()
-            val iframeSrc = rawIframeSrc?.takeIf { it.isNotBlank() }?.let { cleanUrl(it) }
-
-            val playLink = doc.selectFirst("a#play-button, a.play-game, a.btn-play, a[href*='/play/'], a[href*='/game-play/']")?.attr("href")?.let { cleanUrl(it) }
-
-            val playUrl = iframeSrc ?: playLink ?: url
-            val engine = when {
-                playUrl.contains("twine", true) || desc.contains("twine", true) || desc.contains("sugarcube", true) -> "Twine SugarCube"
-                playUrl.contains("renpy", true) || desc.contains("renpy", true) -> "Ren'Py Web"
-                playUrl.contains("unity", true) -> "Unity WebGL"
-                playUrl.contains("rpgmaker", true) || desc.contains("rpg maker", true) -> "RPG Maker"
-                else -> "HTML5"
+                } catch (jsonEx: Exception) {
+                    logError(jsonEx)
+                }
             }
 
-            val tags = doc.select(".tags a, .genres a, .categories a, .game-tags a").map { it.text().trim() }.filter { it.isNotBlank() }
+            val title = jsonTitle
+                ?: doc.selectFirst("h1")?.text()?.trim()
+                ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                ?: return@withContext null
+
+            // 2. Parse story description with clean preserved paragraphs
+            val descBuilder = StringBuilder()
+            val descHeading = doc.selectFirst("h2:contains(Description), h2:contains(About)")
+            if (descHeading != null) {
+                var sibling = descHeading.nextElementSibling()
+                while (sibling != null && !sibling.tagName().startsWith("h", ignoreCase = true)) {
+                    if (sibling.tagName().equals("p", ignoreCase = true)) {
+                        val pText = sibling.text().trim()
+                        if (pText.isNotBlank()) {
+                            if (descBuilder.isNotEmpty()) descBuilder.append("\n\n")
+                            descBuilder.append(pText)
+                        }
+                    }
+                    sibling = sibling.nextElementSibling()
+                }
+            }
+
+            if (descBuilder.isBlank()) {
+                val descElem = doc.selectFirst(".game-description, #description, .entry-content, .description")
+                descElem?.let { elem ->
+                    elem.select("script, style, iframe, noscript, .tags, .buttons, .share-buttons").remove()
+                    val text = elem.wholeText().lineSequence()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .joinToString("\n\n")
+                    descBuilder.append(text)
+                }
+            }
+
+            val desc = descBuilder.toString().ifBlank {
+                doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
+            }
+
+            // 3. Parse poster image
+            val poster = jsonImages.firstOrNull()
+                ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+                ?: doc.selectFirst(".game-poster img, .thumbnail img, img.cover")?.attr("src")?.trim()
+
+            // 4. Parse full screenshots gallery
+            val screenshots = mutableListOf<String>()
+            screenshots.addAll(jsonImages)
+
+            val domScreenshots = doc.select("img[data-src*='/uploads/public/'], a[href*='/uploads/public/']")
+            val badKeywords = listOf("logo", "avatar", "icon", "banner", "advert", "button", "play-icon")
+            for (elem in domScreenshots) {
+                val rawSrc = elem.attr("data-src").ifBlank { elem.attr("href") }.trim()
+                if (rawSrc.isNotBlank() && badKeywords.none { rawSrc.contains(it, ignoreCase = true) }) {
+                    val clean = cleanUrl(rawSrc)
+                    if (clean.endsWith(".jpg", true) || clean.endsWith(".jpeg", true) || clean.endsWith(".png", true) || clean.endsWith(".webp", true)) {
+                        screenshots.add(clean)
+                    }
+                }
+            }
+
+            // 5. Developer and Studio
+            var author: String? = null
+            val devHeading = doc.selectFirst("h2:contains(Developer)")
+            if (devHeading != null) {
+                author = devHeading.nextElementSibling()?.selectFirst("h3, a, p")?.text()?.trim()
+            }
+            if (author.isNullOrBlank()) {
+                author = doc.selectFirst(".developer, .author, a[href*='/developer/']")?.text()?.trim()
+            }
+
+            // 6. Tags and Genres
+            val tagElements = doc.select("h2:contains(Tags) ~ a, .tags a, .genres a, a[href^='/']")
+                .filter { it.attr("href").count { c -> c == '/' } == 1 } // single path segment like /visual-novels
+            val tags = tagElements.map { it.text().trim() }.filter { it.isNotBlank() && it.length < 30 }.distinct()
+
+            // 7. Walkthrough PDF link
+            val guideLink = doc.selectFirst("a[href*='.pdf']")?.attr("href")?.trim()?.let { cleanUrl(it) }
+
+            // 8. Views and dates formatting
+            val viewsStr = jsonViews?.let {
+                when {
+                    it >= 1_000_000 -> String.format("%.1fM views", it / 1_000_000.0)
+                    it >= 1_000 -> String.format("%.1fK views", it / 1_000.0)
+                    else -> "$it views"
+                }
+            } ?: doc.selectFirst("*:matchesOwn(Views:)")?.text()?.trim()
+
+            val updatedStr = jsonUpgraded ?: doc.selectFirst("*:matchesOwn(updated on)")?.text()?.trim()
+
+            val ratingVal = doc.selectFirst("*:matchesOwn(Rating:)")?.text()?.trim()
+                ?.substringAfter("Rating:")?.trim()
+
+            // 9. Play URL
+            val playUrl = jsonIframe?.let { cleanUrl(it) } ?: url
+
+            val engine = when {
+                tags.any { it.contains("Twine", true) } || desc.contains("Twine", true) || desc.contains("SugarCube", true) -> "Twine SugarCube"
+                tags.any { it.contains("RenPy", true) } || desc.contains("Ren'Py", true) || playUrl.contains("renpy", true) -> "Ren'Py Web"
+                tags.any { it.contains("Unity", true) } || playUrl.contains("unity", true) -> "Unity WebGL"
+                tags.any { it.contains("3D", true) } -> "3D WebGL"
+                tags.any { it.contains("2D", true) } -> "2D Canvas"
+                else -> "HTML5"
+            }
 
             CeliumGameTile(
                 name = title,
                 url = url,
-                apiName = "PornGameHub",
+                apiName = "PornGamesHub",
                 type = TvType.NSFW,
                 posterUrl = poster?.let { cleanUrl(it) },
                 posterHeaders = mapOf("Referer" to MAIN_URL),
@@ -231,9 +354,13 @@ object PornGameHubProvider {
                 description = desc,
                 playUrl = playUrl,
                 author = author,
-                version = version,
+                version = if (title.contains("[")) title.substringAfter("[").substringBefore("]").trim() else null,
                 tags = tags,
-                screenshots = screenshots
+                screenshots = screenshots.distinct(),
+                updatedAt = updatedStr,
+                views = viewsStr,
+                rating = ratingVal?.let { "$it ★" },
+                guideUrl = guideLink
             )
         } catch (e: Exception) {
             logError(e)

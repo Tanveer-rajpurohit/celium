@@ -125,7 +125,7 @@ class CeliumGameDetailActivity : ComponentActivity() {
         var previewImage by remember { mutableStateOf<String?>(null) }
         var importDialogOpen by remember { mutableStateOf(false) }
         var importInputText by remember { mutableStateOf("") }
-        val refererUrl = if (gameUrl.contains("itch.io", ignoreCase = true)) "https://itch.io" else PornGameHubProvider.MAIN_URL
+        val refererUrl = if (gameUrl.contains("adultgamesworld", ignoreCase = true)) AdultGamesWorldProvider.MAIN_URL else PornGameHubProvider.MAIN_URL
         val scope = rememberCoroutineScope()
 
         fun fetchGameDetails() {
@@ -279,6 +279,37 @@ class CeliumGameDetailActivity : ComponentActivity() {
                                             )
                                         }
                                     }
+
+                                    current.rating?.takeIf { it.isNotBlank() }?.let { rating ->
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = Color(0xFF332A15)
+                                        ) {
+                                            Text(
+                                                text = rating,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                color = Color(0xFFFFD54F)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                current.views?.takeIf { it.isNotBlank() }?.let { views ->
+                                    Text(
+                                        text = views,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                current.updatedAt?.takeIf { it.isNotBlank() }?.let { updated ->
+                                    Text(
+                                        text = if (updated.startsWith("updated", ignoreCase = true)) updated else "Updated: $updated",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -402,6 +433,31 @@ class CeliumGameDetailActivity : ComponentActivity() {
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+
+                        current.guideUrl?.takeIf { it.isNotBlank() }?.let { guideUrl ->
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val browserIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(guideUrl))
+                                    startActivity(browserIntent)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_outline_info_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "View Strategy Guide / Walkthrough (PDF)",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
                         }
                     }
 
