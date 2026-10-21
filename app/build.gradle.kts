@@ -106,8 +106,8 @@ android {
         applicationId = "app.celium.android"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 73
-        versionName = "7.0.2-celium"
+        versionCode = 74
+        versionName = "7.0.3-celium"
 
         manifestPlaceholders["target_sdk_version"] = libs.versions.targetSdk.get()
 

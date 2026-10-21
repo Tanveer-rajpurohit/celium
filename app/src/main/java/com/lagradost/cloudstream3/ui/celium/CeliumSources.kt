@@ -53,9 +53,11 @@ object CeliumSources {
 
     val all = listOf(
         CeliumSource("multi", "MultiMovies", "MultiMoviesProvider", PHISHER, aliases = setOf("MultiMovies")),
+        CeliumSource("netflix", "Netflix", "CNC Verse", CNC, aliases = setOf("Netflix", "NetflixMirrorProvider", "cnc", "CNC Verse")),
+        CeliumSource("prime", "Amazon Prime Video", "CNC Verse", CNC, aliases = setOf("Prime Video", "PrimeVideoMirrorProvider", "Amazon Prime", "Prime")),
+        CeliumSource("disney", "Disney+ Hotstar", "CNC Verse", CNC, aliases = setOf("Disney+", "Hotstar", "DisneyStudioProvider", "HotStarMirrorProvider", "Disney Plus")),
         CeliumSource("hdhub", "HDhub4u", "HDhub4u", PHISHER),
         CeliumSource("hdmovie2", "HDmovie2", "Hdmovie2", PHISHER),
-        CeliumSource("cnc", "Netflix · Prime · Disney+", "CNC Verse", CNC),
         CeliumSource("moviebox", "MovieBox", "MovieBoxProvider", CNC),
         CeliumSource("cinestream", "CineStream", "CineStream", CSX),
         CeliumSource("movies4u", "Movies4u", "Movies4u", PHISHER),
@@ -105,8 +107,10 @@ object CeliumSources {
         else -> listOf(curated(section)) + all.filter { enabled(it) && !it.adult && !it.anime }
     }
 
-    fun selected(section: CeliumSection, savedId: String?): CeliumSource =
-        choices(section).firstOrNull { it.id == savedId } ?: choices(section).first()
+    fun selected(section: CeliumSection, savedId: String?): CeliumSource {
+        val mappedId = if (savedId == "cnc") "netflix" else savedId
+        return choices(section).firstOrNull { it.id == mappedId } ?: choices(section).first()
+    }
 
     fun normalize(value: String): String = value.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
 
@@ -116,27 +120,66 @@ object CeliumSources {
 
     fun resolve(source: CeliumSource, providers: List<MainAPI>): MainAPI? {
         if (source.unavailableReason != null || !enabled(source) || (source.adult && !MainAPI.settingsForProvider.enableAdult)) return null
-        // Prefer the artifact identity; display names can change independently of the plugin name.
-        val fileNames = setOf("${source.plugin.replace(" ", "")}.${source.plugin.hashCode()}.cs3", "${source.plugin}.cs3", "${source.plugin}.zip")
+        val targetNames = (source.aliases + source.label + source.plugin).map(::normalize).toSet()
+
+        // 1. Candidate resolution via plugin artifact or matching name
+        val baseName = source.plugin.replace(" ", "")
+        val fileNames = setOf("${baseName}.${source.plugin.hashCode()}.cs3", "${source.plugin}.cs3", "${baseName}.cs3", "${source.plugin}.zip")
         val candidates = providers.filter { api ->
-            api.sourcePlugin?.substringAfterLast('/')?.substringAfterLast('\\') in fileNames
-        }.ifEmpty {
-            val names = (source.aliases + source.label + source.plugin).map(::normalize).toSet()
-            providers.filter { it.sourcePlugin == null && normalize(it.name) in names }
+            val fileName = api.sourcePlugin?.substringAfterLast('/')?.substringAfterLast('\\')
+            if (fileName != null) {
+                fileName in fileNames || fileNames.any { fileName.startsWith(it.removeSuffix(".cs3")) }
+            } else {
+                normalize(api.name) in targetNames
+            }
         }
-        return candidates.firstOrNull { api ->
+
+        // 2. Capability check: adult sources must support NSFW; anime sources must support Anime;
+        // Movies/TV sources must support Movie, TvSeries, or OTT carrier types.
+        val capable = candidates.filter { api ->
             if (source.adult) TvType.NSFW in api.supportedTypes
             else if (source.anime) api.supportedTypes.any { it == TvType.Anime || it == TvType.AnimeMovie || it == TvType.OVA }
-            else api.supportedTypes.any { it == TvType.Movie || it == TvType.TvSeries }
+            else api.supportedTypes.any { it == TvType.Movie || it == TvType.TvSeries || it == TvType.Anime }
         }
+
+        // 3. When multiple providers share the same plugin file (e.g. CNC Verse hosting Netflix, Prime Video, Disney+),
+        // match the candidate that specifically corresponds to this source
+        val specificMatches = capable.filter { api ->
+            val normName = normalize(api.name)
+            normName in targetNames || targetNames.any { it.length >= 4 && (normName.contains(it) || it.contains(normName)) }
+        }
+        val specificMatch = specificMatches.firstOrNull { it.hasMainPage && it.hasQuickSearch }
+            ?: specificMatches.firstOrNull { it.hasMainPage }
+            ?: specificMatches.firstOrNull()
+        if (specificMatch != null) return specificMatch
+
+        return capable.firstOrNull { it.hasMainPage && it.hasQuickSearch }
+            ?: capable.firstOrNull { it.hasMainPage }
+            ?: capable.firstOrNull()
     }
 
-    fun accepts(section: CeliumSection, type: TvType?): Boolean = when (section) {
+    fun isAnime(apiName: String): Boolean {
+        if (apiName.isBlank()) return false
+        val norm = normalize(apiName)
+        return all.any { it.anime && (norm == normalize(it.id) || norm == normalize(it.label) || norm == normalize(it.plugin) || it.aliases.any { a -> norm == normalize(a) }) }
+    }
+
+    fun isOTT(apiName: String): Boolean {
+        if (apiName.isBlank()) return false
+        val norm = normalize(apiName)
+        return norm in setOf(
+            "netflix", "netflixmirrorprovider", "prime", "primevideo", "primevideomirrorprovider",
+            "amazonprime", "disney", "disneyplus", "disneystudioprovider", "hotstar", "hotstarmirrorprovider",
+            "cnc", "cncverse"
+        )
+    }
+
+    fun accepts(section: CeliumSection, type: TvType?, apiName: String = ""): Boolean = when (section) {
         CeliumSection.AdultGames -> type == TvType.NSFW || type == null
         CeliumSection.Adult -> type == TvType.NSFW || type == null
-        CeliumSection.Movies -> type == TvType.Movie || type == null
-        CeliumSection.Series -> type == TvType.TvSeries || type == TvType.AsianDrama || type == null
-        CeliumSection.Anime -> type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA || type == null
+        CeliumSection.Movies -> type == TvType.Movie || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.AnimeMovie))
+        CeliumSection.Series -> type == TvType.TvSeries || type == TvType.AsianDrama || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.OVA))
+        CeliumSection.Anime -> isAnime(apiName) || type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA || type == null
     }
 
     fun isAdult(type: TvType?, apiName: String): Boolean {
@@ -149,13 +192,18 @@ object CeliumSources {
         "title:${normalize(card.name)}:${card.type}:${card.year}"
     } else "url:${card.apiName}:${card.url}"
 
-    /** Home accepts every Movies and TV Shows item: anything that is not Adult or Anime (3.5). */
-    fun acceptsHome(type: TvType?): Boolean =
-        type != TvType.NSFW && type != TvType.Anime && type != TvType.AnimeMovie && type != TvType.OVA
+    /** Home accepts every Movies and TV Shows item: anything that is not Adult, and only excludes Anime from dedicated anime sources. */
+    fun acceptsHome(type: TvType?, apiName: String = ""): Boolean {
+        if (type == TvType.NSFW) return false
+        if (type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA) {
+            return isOTT(apiName)
+        }
+        return true
+    }
 
     fun homeFilter(cards: List<SearchResponse>): List<SearchResponse> =
-        cards.filter { acceptsHome(it.type) }.distinctBy { it.apiName to it.url }
+        cards.filter { acceptsHome(it.type, it.apiName) }.distinctBy { it.apiName to it.url }
 
     fun filter(section: CeliumSection, cards: List<SearchResponse>): List<SearchResponse> =
-        cards.filter { accepts(section, it.type) }.distinctBy { it.apiName to it.url }
+        cards.filter { accepts(section, it.type, it.apiName) }.distinctBy { it.apiName to it.url }
 }

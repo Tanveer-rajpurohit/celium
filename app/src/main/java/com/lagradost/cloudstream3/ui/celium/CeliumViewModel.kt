@@ -173,8 +173,9 @@ class CeliumViewModel : ViewModel() {
         val home = getKey<Boolean>("celium_home") ?: true
         val section = if (home) CeliumSection.Movies
             else CeliumSection.entries.firstOrNull { it.name == getKey<String>("celium_section") } ?: CeliumSection.Movies
+        val savedHomeSourceId = getKey<String>("celium_source_home")
         _state.value = CeliumState(home = home, section = section,
-            source = if (home) CeliumSources.curated(CeliumSection.Movies)
+            source = if (home) CeliumSources.selected(CeliumSection.Movies, savedHomeSourceId)
                 else CeliumSources.selected(section, getKey("celium_source_${section.name}")))
         // Subscribed for the view model's whole lifetime, not only while a fragment is started (16.4).
         CeliumSources.ready += ::sourcePolicyChanged
@@ -350,7 +351,9 @@ class CeliumViewModel : ViewModel() {
     /** Opens Home: the Movies/TV Celium Feed with Movies and TV Shows combined (3.1, 15.5). */
     fun selectHome() {
         if (_state.value.home) return
-        select(CeliumSection.Movies, CeliumSources.curated(CeliumSection.Movies), home = true)
+        val savedHomeSourceId = getKey<String>("celium_source_home")
+        val source = CeliumSources.selected(CeliumSection.Movies, savedHomeSourceId)
+        select(CeliumSection.Movies, source, home = true)
     }
 
     /** Picking an individual provider from Home opens that provider's Movies view. */
@@ -378,8 +381,8 @@ class CeliumViewModel : ViewModel() {
         val pendingQuery = previous.query.takeIf { previous.section == section && previous.home == home }.orEmpty()
         setKey("celium_home", home)
         setKey("celium_section", section.name)
-        // Home's fixed Celium Feed source does not overwrite the Section's saved source choice.
         if (!home) setKey("celium_source_${section.name}", source.id)
+        else setKey("celium_source_home", source.id)
         cancelJobs()
         boundApi = null
         feedSignature = ""
@@ -750,7 +753,8 @@ class CeliumViewModel : ViewModel() {
 
     /** Search uses only the selected provider; Celium Feed uses its first ready pool source (16.11). */
     private fun searchApi(current: CeliumState): MainAPI? =
-        if (current.source.id == "celium") curatedProviders(current.section).firstOrNull()?.second else boundApi
+        if (current.source.id == "celium") curatedProviders(current.section).firstOrNull()?.second
+        else boundApi ?: CeliumSources.resolve(current.source, providers())
 
     fun query(value: String) {
         searchJob?.cancel()
@@ -901,7 +905,7 @@ class CeliumViewModel : ViewModel() {
                 if (!live(token, sourceId)) return@launch
                 val names = if (current.source.id == "celium") curatedProviders(current.section).map { it.second.name }.toSet() else setOfNotNull(boundApi?.name)
                 _state.value = _state.value.copy(resume = resume.filter { it.apiName in names &&
-                    if (current.home) CeliumSources.acceptsHome(it.type) else CeliumSources.accepts(current.section, it.type) }.take(20))
+                    if (current.home) CeliumSources.acceptsHome(it.type, it.apiName) else CeliumSources.accepts(current.section, it.type, it.apiName) }.take(20))
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) { logError(e) }
         }

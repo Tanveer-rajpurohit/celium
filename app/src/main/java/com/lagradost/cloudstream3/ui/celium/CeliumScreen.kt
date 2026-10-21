@@ -69,6 +69,7 @@ fun CeliumScreen(
     // Quick-return header (Requirement 11): resets to visible on Home/Section, source or mode change (11.7).
     val quickReturn = rememberQuickReturnState(state.home, state.section, state.source.id, searchMode)
     var searchFocused by remember { mutableStateOf(false) }
+    var scrollTrigger by remember { mutableStateOf(0) }
     val touchExploring = rememberTouchExploration()
     // Header stays fully visible while typing a query or while touch exploration is on (11.5, 11.10).
     val locked = (searchMode && searchFocused) || touchExploring
@@ -109,20 +110,28 @@ fun CeliumScreen(
                 } }, pinned = { Column {
                     LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                         // Home is the first tab (Req 3); other tabs leave Home via selectSection.
-                        item(key = "home") { CategoryTab("Home", state.home, onHome) }
+                        item(key = "home") {
+                            CategoryTab("Home", state.home) {
+                                if (state.home) { scrollTrigger++; quickReturn.offset = 0f }
+                                onHome()
+                            }
+                        }
                         items(CeliumSection.entries.filter { state.adultEnabled || (it != CeliumSection.Adult && it != CeliumSection.AdultGames) }, key = { it.name }) { section ->
-                            CategoryTab(section.label, !state.home && state.section == section) { onSection(section) }
+                            CategoryTab(section.label, !state.home && state.section == section) {
+                                if (!state.home && state.section == section) { scrollTrigger++; quickReturn.offset = 0f }
+                                onSection(section)
+                            }
                         }
                     }
                     if (state.searching || state.busy || preparing) LinearProgressIndicator(Modifier.fillMaxWidth())
                 } }) {
-                    key(state.home, state.section, state.source.id, searchMode) {
+                    key(state.home, state.section, state.source.id, searchMode, scrollTrigger) {
                         if (searchMode) SearchContent(state, edge, width, onQuery, onMoreSearch, onOpen, Modifier.fillMaxSize(), onRetry,
                             onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn)
                         else {
-                        val feedList = rememberLazyListState()
-                        // Each newly opened tab or source starts at the top with the header visible.
-                        LaunchedEffect(Unit) { feedList.scrollToItem(0); quickReturn.offset = 0f }
+                        val feedKey = "${state.home}_${state.section.name}_${state.source.id}_$scrollTrigger"
+                        val feedList = remember(feedKey) { androidx.compose.foundation.lazy.LazyListState(0, 0) }
+                        LaunchedEffect(feedKey) { quickReturn.offset = 0f }
                         ResetHeaderAtTop(quickReturn) { feedList.firstVisibleItemIndex == 0 && feedList.firstVisibleItemScrollOffset == 0 }
                         val notice = bindFailure ?: state.feedError?.let { "$it Retry, or choose another source." } ?: state.message
                         val hero = state.shelves.firstOrNull()?.cards?.firstOrNull()
