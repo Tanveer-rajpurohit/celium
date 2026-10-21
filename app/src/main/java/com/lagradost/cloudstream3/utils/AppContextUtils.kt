@@ -756,10 +756,9 @@ object AppContextUtils {
         startValue: Int? = null,
     ) {
         val isAdultGame = card is com.lagradost.cloudstream3.ui.celium.game.CeliumGameTile
-            || card.apiName in setOf("PornGameHub", "PornGamesHub", "AdultGamesWorld")
+            || card.apiName in setOf("PornGameHub", "PornGamesHub")
             || card.url.contains("porngameshub", true)
             || card.url.contains("porngamehub", true)
-            || card.url.contains("adultgamesworld", true)
         if (isAdultGame) {
             val intent = android.content.Intent(this, com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity::class.java).apply {
                 putExtra(com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity.EXTRA_GAME_URL, card.url)

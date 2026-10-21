@@ -258,6 +258,21 @@ object PornGameHubProvider {
                 }
             }
 
+            // Resilient regex and DOM fallback for link_iframe
+            if (jsonIframe.isNullOrBlank()) {
+                val directIframeRegex = Regex(""""link_iframe"\s*:\s*"([^"]+)"""")
+                val iframeMatch = directIframeRegex.find(pageHtml)
+                if (iframeMatch != null) {
+                    jsonIframe = iframeMatch.groupValues[1].replace("\\/", "/")
+                }
+            }
+            if (jsonIframe.isNullOrBlank()) {
+                val domIframe = doc?.selectFirst("iframe[src*='storage'], iframe#game-iframe, iframe.game-frame, iframe[src*='html']")?.attr("src")?.trim()
+                if (!domIframe.isNullOrBlank()) {
+                    jsonIframe = domIframe
+                }
+            }
+
             val title = jsonTitle
                 ?: doc?.selectFirst("h1")?.text()?.trim()
                 ?: doc?.selectFirst("meta[property=og:title]")?.attr("content")?.trim()

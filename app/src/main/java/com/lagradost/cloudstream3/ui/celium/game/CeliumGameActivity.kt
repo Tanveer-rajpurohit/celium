@@ -8,7 +8,11 @@ import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.View
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -16,6 +20,10 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,22 +36,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.ui.celium.CeliumTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 
 class CeliumGameActivity : ComponentActivity() {
 
     private var webView: WebView? = null
     private var gameId: String = ""
     private var gameTitle: String = ""
-    private var playUrl: String = ""
+    private var rawPlayUrl: String = ""
 
     companion object {
         const val EXTRA_GAME_ID = "extra_game_id"
@@ -52,7 +66,8 @@ class CeliumGameActivity : ComponentActivity() {
 
         private val BLOCKED_HOSTS = listOf(
             "adsterra", "exoclick", "trafficjunky", "popads", "hilltopads",
-            "tsyndicate", "juicyads", "ero-advertising", "realsrv", "bet"
+            "tsyndicate", "juicyads", "ero-advertising", "realsrv", "bet",
+            "google-analytics", "googletagmanager"
         )
     }
 
@@ -67,13 +82,16 @@ class CeliumGameActivity : ComponentActivity() {
 
         gameId = intent.getStringExtra(EXTRA_GAME_ID).orEmpty().ifBlank { "unknown_game" }
         gameTitle = intent.getStringExtra(EXTRA_GAME_TITLE).orEmpty().ifBlank { "Story Game" }
-        playUrl = intent.getStringExtra(EXTRA_PLAY_URL).orEmpty()
+        rawPlayUrl = intent.getStringExtra(EXTRA_PLAY_URL).orEmpty()
 
-        if (playUrl.isBlank()) {
+        if (rawPlayUrl.isBlank()) {
             Toast.makeText(this, "Game play URL is missing.", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
+
+        // Record last played timestamp for intelligent frame cache lifecycle
+        CeliumGameCacheManager.recordGamePlayed(this, gameId)
 
         setContent {
             CeliumTheme {
@@ -90,16 +108,108 @@ class CeliumGameActivity : ComponentActivity() {
         var lastSavedAt by remember { mutableStateOf(CeliumGameSaveStore.load(gameId)?.timestamp ?: 0L) }
         var isLandscape by remember { mutableStateOf(false) }
 
+        // Dynamic Loading & Engine Readiness States
+        var loadingProgress by remember { mutableIntStateOf(10) }
+        var statusMessage by remember { mutableStateOf("Connecting to Game Runtime...") }
+        var engineReady by remember { mutableStateOf(false) }
+
+        val animatedProgress by animateFloatAsState(
+            targetValue = (loadingProgress / 100f).coerceIn(0f, 1f),
+            label = "GameProgress"
+        )
+
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             // Hardware-accelerated Game WebView
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    createGameWebView(ctx) { ts ->
-                        runOnUiThread { lastSavedAt = ts }
-                    }.also { webView = it }
+                    createGameWebView(
+                        context = ctx,
+                        onSaveUpdate = { ts -> runOnUiThread { lastSavedAt = ts } },
+                        onProgress = { pct, status ->
+                            runOnUiThread {
+                                if (pct > loadingProgress) loadingProgress = pct
+                                if (status.isNotBlank()) statusMessage = status
+                                if (pct >= 100) engineReady = true
+                            }
+                        },
+                        onReady = {
+                            runOnUiThread {
+                                loadingProgress = 100
+                                engineReady = true
+                            }
+                        }
+                    ).also {
+                        webView = it
+                        resolveAndLoadRuntime(it) { pct, msg ->
+                            runOnUiThread {
+                                loadingProgress = pct
+                                statusMessage = msg
+                            }
+                        }
+                    }
                 }
             )
+
+            // High-fidelity Native Loading Screen with Progress Bar
+            AnimatedVisibility(
+                visible = !engineReady,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF0F0F14)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .padding(24.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp),
+                            strokeWidth = 3.dp
+                        )
+
+                        Text(
+                            text = gameTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1
+                        )
+
+                        Text(
+                            text = statusMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFAAAAAA)
+                        )
+
+                        // Smooth Visual Progress Bar
+                        LinearProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color(0xFF262630)
+                        )
+
+                        Text(
+                            text = "$loadingProgress%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF888888)
+                        )
+                    }
+                }
+            }
 
             // Discreet floating menu trigger
             Box(
@@ -245,8 +355,37 @@ class CeliumGameActivity : ComponentActivity() {
         }
     }
 
+    private fun resolveAndLoadRuntime(targetWebView: WebView, onProgressUpdate: (Int, String) -> Unit) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var finalUrl = rawPlayUrl
+            // If the URL passed is a website article page rather than a direct storage runtime, resolve it
+            if (rawPlayUrl.contains("porngameshub.com", ignoreCase = true) && !rawPlayUrl.contains("storage", ignoreCase = true)) {
+                onProgressUpdate(20, "Resolving Direct Game Engine...")
+                val loaded = PornGameHubProvider.loadGame(rawPlayUrl)
+                if (loaded != null && !loaded.playUrl.isNullOrBlank() && loaded.playUrl != rawPlayUrl) {
+                    finalUrl = loaded.playUrl
+                }
+            }
+
+            onProgressUpdate(40, "Downloading Ren'Py & WebGL Core...")
+
+            withContext(Dispatchers.Main) {
+                val headers = mapOf(
+                    "Referer" to "https://porngameshub.com/",
+                    "Origin" to "https://porngameshub.com"
+                )
+                targetWebView.loadUrl(finalUrl, headers)
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createGameWebView(context: Context, onSaveUpdate: (Long) -> Unit): WebView {
+    private fun createGameWebView(
+        context: Context,
+        onSaveUpdate: (Long) -> Unit,
+        onProgress: (Int, String) -> Unit,
+        onReady: () -> Unit
+    ): WebView {
         return WebView(context).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -262,19 +401,60 @@ class CeliumGameActivity : ComponentActivity() {
                 userAgentString = USER_AGENT
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 setSupportMultipleWindows(false)
+                // Cache frames locally for instant repeat transitions and low mobile data consumption
+                cacheMode = WebSettings.LOAD_DEFAULT
             }
 
-            val bridge = CeliumGameBridge(gameId, onSaveUpdate)
+            val bridge = CeliumGameBridge(gameId, onSaveUpdate, onProgress, onReady)
             addJavascriptInterface(bridge, CeliumGameBridge.JS_INTERFACE_NAME)
+
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    super.onProgressChanged(view, newProgress)
+                    if (newProgress in 40..95) {
+                        onProgress(newProgress, "Preloading Story Frames & Assets ($newProgress%)...")
+                    } else if (newProgress >= 100) {
+                        onProgress(100, "Starting Story Engine...")
+                    }
+                }
+
+                // Suppress disruptive JS popups from interrupting gameplay
+                override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                    result?.confirm()
+                    return true
+                }
+
+                override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                    result?.confirm()
+                    return true
+                }
+
+                override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
+                    result?.confirm(defaultValue)
+                    return true
+                }
+            }
 
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val url = request?.url?.toString() ?: return false
                     // Filter out disruptive ad redirectors and popups
-                    if (BLOCKED_HOSTS.any { url.contains(it, ignoreCase = true) }) {
+                    if (BLOCKED_HOSTS.any { url.contains(it, ignoreCase = true) }
+                        || url.contains("/advertise", ignoreCase = true)) {
                         return true
                     }
                     return false
+                }
+
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                    val url = request?.url?.toString() ?: return null
+                    // Intercept and neutralize protection scripts, ad networks, and popups
+                    if (url.contains("protection.js", ignoreCase = true)
+                        || url.contains("combiner/protection", ignoreCase = true)
+                        || BLOCKED_HOSTS.any { url.contains(it, ignoreCase = true) }) {
+                        return WebResourceResponse("application/javascript", "UTF-8", ByteArrayInputStream("".toByteArray()))
+                    }
+                    return super.shouldInterceptRequest(view, request)
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -291,10 +471,12 @@ class CeliumGameActivity : ComponentActivity() {
                     val snapshot = CeliumGameSaveStore.load(gameId)
                     val script = CeliumGameBridge.getPreloadScript(snapshot)
                     view?.evaluateJavascript(script, null)
+
+                    // Inject anti-popup styling and frame preloader
+                    val runtimeScript = CeliumGameBridge.getRuntimeEnhancementScript()
+                    view?.evaluateJavascript(runtimeScript, null)
                 }
             }
-
-            loadUrl(playUrl)
         }
     }
 
@@ -307,6 +489,12 @@ class CeliumGameActivity : ComponentActivity() {
             destroy()
         }
         webView = null
+
+        // Prune stale game assets older than 14 days in background while preserving all narrative saves
+        lifecycleScope.launch(Dispatchers.IO) {
+            CeliumGameCacheManager.pruneInactiveGameAssets(applicationContext)
+        }
+
         super.onDestroy()
     }
 }

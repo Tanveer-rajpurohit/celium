@@ -132,7 +132,7 @@ class CeliumGameDetailActivity : ComponentActivity() {
         var previewImage by remember { mutableStateOf<String?>(null) }
         var importDialogOpen by remember { mutableStateOf(false) }
         var importInputText by remember { mutableStateOf("") }
-        val refererUrl = if (gameUrl.contains("adultgamesworld", ignoreCase = true)) AdultGamesWorldProvider.MAIN_URL else PornGameHubProvider.MAIN_URL
+        val refererUrl = PornGameHubProvider.MAIN_URL
         val scope = rememberCoroutineScope()
 
         fun fetchGameDetails() {
@@ -392,11 +392,13 @@ class CeliumGameDetailActivity : ComponentActivity() {
                     item("play_action") {
                         val snapshot = currentSaveSnapshot
                         val hasSave = snapshot != null && snapshot.localStorageDump.isNotEmpty()
+                        val isResolving = isLoading && current.playUrl.isNullOrBlank()
 
                         Button(
                             onClick = {
                                 launchGame(current.playUrl ?: current.url, current.name)
                             },
+                            enabled = !isResolving,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(52.dp)
@@ -407,17 +409,31 @@ class CeliumGameDetailActivity : ComponentActivity() {
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             )
                         ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_baseline_play_arrow_24),
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = if (hasSave) "RESUME STORY" else "PLAY GAME",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
+                            if (isResolving) {
+                                CircularProgressIndicator(
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = "INITIALIZING RUNTIME...",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_baseline_play_arrow_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (hasSave) "RESUME STORY" else "PLAY GAME",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         current.guideUrl?.takeIf { it.isNotBlank() }?.let { guideUrl ->
