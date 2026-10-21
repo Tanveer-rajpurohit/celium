@@ -61,6 +61,8 @@ fun CeliumScreen(
     onRetryPaging: (String) -> Unit = {},
     onRetrySlot: (CategorySlot) -> Unit = {},
     randomEnabled: Boolean = false,
+    getScroll: (String) -> Pair<Int, Int> = { Pair(0, 0) },
+    setScroll: (String, Int, Int) -> Unit = { _, _, _ -> },
 ) {
     val preparing = state.binding == BindStatus.Waiting
     val bindFailure = (state.binding as? BindStatus.Failed)?.message
@@ -130,7 +132,36 @@ fun CeliumScreen(
                             onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn)
                         else {
                         val feedKey = "${state.home}_${state.section.name}_${state.source.id}_$scrollTrigger"
-                        val feedList = remember(feedKey) { androidx.compose.foundation.lazy.LazyListState(0, 0) }
+                        val initialScrollPos = remember(feedKey) { getScroll(feedKey) }
+                        val feedList = rememberSaveable(feedKey, saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+                            androidx.compose.foundation.lazy.LazyListState(initialScrollPos.first, initialScrollPos.second)
+                        }
+                        var userHasScrolled by remember(feedKey) { mutableStateOf(initialScrollPos.first > 0 || initialScrollPos.second > 0) }
+
+                        LaunchedEffect(feedList.isScrollInProgress) {
+                            if (feedList.isScrollInProgress) {
+                                userHasScrolled = true
+                            }
+                        }
+
+                        LaunchedEffect(feedList, feedKey) {
+                            snapshotFlow { Pair(feedList.firstVisibleItemIndex, feedList.firstVisibleItemScrollOffset) }
+                                .collect { (idx, off) ->
+                                    if (feedList.isScrollInProgress || idx > 0 || off > 0) {
+                                        setScroll(feedKey, idx, off)
+                                    }
+                                }
+                        }
+
+                        // Prevent downward drift when parallel slots load into Celium Feed:
+                        // If the user hasn't scrolled, pin to top
+                        LaunchedEffect(state.shelves.firstOrNull()?.key) {
+                            if (!userHasScrolled && (feedList.firstVisibleItemIndex != 0 || feedList.firstVisibleItemScrollOffset != 0)) {
+                                feedList.scrollToItem(0, 0)
+                                quickReturn.offset = 0f
+                            }
+                        }
+
                         LaunchedEffect(feedKey) { quickReturn.offset = 0f }
                         ResetHeaderAtTop(quickReturn) { feedList.firstVisibleItemIndex == 0 && feedList.firstVisibleItemScrollOffset == 0 }
                         val notice = bindFailure ?: state.feedError?.let { "$it Retry, or choose another source." } ?: state.message
@@ -203,10 +234,11 @@ fun CeliumScreen(
                                 PagingFooter(sectionsPaging, onRetry = { onRetryPaging(CeliumState.SECTIONS) }, Modifier.padding(horizontal = edge))
                             }
                             // Loading with nothing shown yet: shelf placeholders instead of an empty message.
-                            val loading = (state.busy || preparing) && bindFailure == null && state.feedError == null
-                            if (state.shelves.isEmpty() && loading) items(3, key = { "placeholder:$it" }, contentType = { "placeholder" }) {
+                            val hasError = bindFailure != null || state.feedError != null || state.message != null
+                            val loading = state.busy || preparing || (!hasError && state.shelves.isEmpty())
+                            if (state.shelves.isEmpty() && loading && !hasError) items(3, key = { "placeholder:$it" }, contentType = { "placeholder" }) {
                                 CeliumShelfPlaceholder(width, edge)
-                            } else if (state.shelves.isEmpty()) item("empty") {
+                            } else if (state.shelves.isEmpty() && !loading) item("empty") {
                                 CeliumEmpty("Your feed is unavailable",
                                     "Retry, or choose another source. Search is available in its own tab.")
                             }

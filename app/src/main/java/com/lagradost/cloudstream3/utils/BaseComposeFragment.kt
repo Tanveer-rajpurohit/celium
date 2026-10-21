@@ -6,6 +6,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.ViewCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import com.lagradost.cloudstream3.R
@@ -14,6 +15,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLandscape
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.UIHelper.fixSystemBarsPadding
+import com.lagradost.cloudstream3.utils.UIHelper.getStatusBarHeight
 import com.lagradost.cloudstream4.compose.Screen
 import com.lagradost.cloudstream4.compose.createComposeView
 
@@ -40,6 +42,10 @@ abstract class BaseComposeFragment : Fragment(), Screen {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        val statusBarHeight = view.context.getStatusBarHeight()
+        if (statusBarHeight > 0) {
+            view.updatePadding(top = statusBarHeight)
+        }
         fixSystemBarsPadding(
             view,
             padLeft = isLayout(TV or EMULATOR),

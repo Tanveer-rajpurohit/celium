@@ -30,11 +30,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.lagradost.cloudstream3.R
+import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.ui.celium.CeliumArtwork
 import com.lagradost.cloudstream3.ui.celium.CeliumBackButton
 import com.lagradost.cloudstream3.ui.celium.CeliumRefreshButton
 import com.lagradost.cloudstream3.ui.celium.CeliumTheme
+import com.lagradost.cloudstream3.utils.DataStoreHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CeliumGameDetailActivity : ComponentActivity() {
 
@@ -107,8 +111,49 @@ class CeliumGameDetailActivity : ComponentActivity() {
             }
         }
 
+        val gameId = gameUrl.hashCode()
+        var isSaved by remember { mutableStateOf(false) }
+
         LaunchedEffect(gameUrl) {
+            withContext(Dispatchers.IO) {
+                isSaved = DataStoreHelper.getBookmarkedData(gameId) != null
+            }
             fetchGameDetails()
+        }
+
+        val toggleSave: () -> Unit = {
+            scope.launch {
+                val nextState = !isSaved
+                val currentSnapshot = gameTile ?: CeliumGameTile(
+                    name = initialTitle,
+                    url = gameUrl,
+                    posterUrl = initialPoster
+                )
+                withContext(Dispatchers.IO) {
+                    if (nextState) {
+                        val data = DataStoreHelper.BookmarkedData(
+                            bookmarkedTime = System.currentTimeMillis(),
+                            id = gameId,
+                            latestUpdatedTime = System.currentTimeMillis(),
+                            name = currentSnapshot.name,
+                            url = currentSnapshot.url,
+                            apiName = "PornGamesHub",
+                            type = TvType.NSFW,
+                            posterUrl = currentSnapshot.posterUrl ?: initialPoster,
+                            year = null
+                        )
+                        DataStoreHelper.setBookmarkedData(gameId, data)
+                    } else {
+                        DataStoreHelper.deleteBookmarkedData(gameId)
+                    }
+                }
+                isSaved = nextState
+                Toast.makeText(
+                    this@CeliumGameDetailActivity,
+                    if (nextState) "Saved to Library" else "Removed from Library",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
 
         Column(Modifier.fillMaxSize()) {
@@ -128,6 +173,16 @@ class CeliumGameDetailActivity : ComponentActivity() {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(onClick = toggleSave) {
+                    Icon(
+                        painter = painterResource(
+                            if (isSaved) R.drawable.ic_baseline_bookmark_24
+                            else R.drawable.ic_baseline_bookmark_border_24
+                        ),
+                        contentDescription = if (isSaved) "Saved" else "Save",
+                        tint = if (isSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
                 CeliumRefreshButton(onClick = { fetchGameDetails() }, enabled = !isLoading)
             }
 
@@ -263,49 +318,74 @@ class CeliumGameDetailActivity : ComponentActivity() {
 
 
 
-                    // Primary Play CTA Button
+                    // Primary Play CTA Button + Save Button
                     item("play_action") {
                         val isResolving = isLoading && current.playUrl.isNullOrBlank()
 
-                        Button(
-                            onClick = {
-                                launchGame(current.playUrl ?: current.url, current.name, current.posterUrl ?: initialPoster)
-                            },
-                            enabled = !isResolving,
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
                                 .padding(horizontal = 24.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (isResolving) {
-                                CircularProgressIndicator(
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp
+                            Button(
+                                onClick = {
+                                    launchGame(current.playUrl ?: current.url, current.name, current.posterUrl ?: initialPoster)
+                                },
+                                enabled = !isResolving,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
                                 )
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    text = "INITIALIZING RUNTIME...",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            } else {
+                            ) {
+                                if (isResolving) {
+                                    CircularProgressIndicator(
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        text = "INITIALIZING RUNTIME...",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_baseline_play_arrow_24),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = "PLAY GAME",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            OutlinedButton(
+                                onClick = toggleSave,
+                                modifier = Modifier.height(52.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp)
+                            ) {
                                 Icon(
-                                    painter = painterResource(R.drawable.ic_baseline_play_arrow_24),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp)
+                                    painter = painterResource(
+                                        if (isSaved) R.drawable.ic_baseline_bookmark_24
+                                        else R.drawable.ic_baseline_bookmark_border_24
+                                    ),
+                                    contentDescription = if (isSaved) "Saved" else "Save",
+                                    tint = if (isSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    text = "PLAY GAME",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isSaved) "SAVED" else "SAVE")
                             }
                         }
 

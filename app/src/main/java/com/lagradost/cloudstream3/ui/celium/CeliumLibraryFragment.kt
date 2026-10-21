@@ -1,5 +1,6 @@
 package com.lagradost.cloudstream3.ui.celium
 
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.ui.celium.game.CeliumGameDetailActivity
 import com.lagradost.cloudstream3.utils.AppContextUtils.loadSearchResult
 import com.lagradost.cloudstream3.utils.BaseComposeFragment
 import com.lagradost.cloudstream3.utils.DataStoreHelper
@@ -56,6 +59,41 @@ class CeliumLibraryFragment : BaseComposeFragment() {
     private fun eligible(card: SearchResponse) =
         MainAPI.settingsForProvider.enableAdult || !CeliumSources.isAdult(card.type, card.apiName)
 
+    private fun isGame(card: SearchResponse): Boolean =
+        card is com.lagradost.cloudstream3.ui.celium.game.CeliumGameTile ||
+        card.apiName in setOf("PornGameHub", "PornGamesHub") ||
+        card.url.contains("porngameshub", true) ||
+        card.url.contains("porngamehub", true)
+
+    private fun categoryLabel(card: SearchResponse): String {
+        return when {
+            isGame(card) -> "Adult Game"
+            card.type == TvType.Movie -> "Movie"
+            card.type == TvType.TvSeries -> "Series"
+            card.type == TvType.Anime || card.type == TvType.AnimeMovie || card.type == TvType.OVA -> "Anime"
+            card.type == TvType.Cartoon -> "Animation"
+            card.type == TvType.Documentary -> "Documentary"
+            card.type == TvType.AsianDrama -> "Asian Drama"
+            card.type == TvType.NSFW -> "Adult"
+            else -> card.type?.name ?: "Video"
+        }
+    }
+
+    private fun openItem(card: SearchResponse) {
+        if (isGame(card)) {
+            val intent = Intent(requireContext(), CeliumGameDetailActivity::class.java).apply {
+                putExtra(CeliumGameDetailActivity.EXTRA_GAME_URL, card.url)
+                putExtra(CeliumGameDetailActivity.EXTRA_GAME_TITLE, card.name)
+                putExtra(CeliumGameDetailActivity.EXTRA_POSTER_URL, card.posterUrl)
+            }
+            startActivity(intent)
+        } else if (card is DataStoreHelper.ResumeWatchingResult) {
+            SearchHelper.handleSearchClickCallback(SearchClickCallback(SEARCH_ACTION_PLAY_FILE, requireView(), -1, card))
+        } else {
+            loadSearchResult(card)
+        }
+    }
+
     private fun remove(card: SearchResponse, fromHistory: Boolean) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
@@ -94,23 +132,41 @@ class CeliumLibraryFragment : BaseComposeFragment() {
                     LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         items(cards, key = { "${it.apiName}:${it.url}" }, contentType = { "library-row" }) { card ->
                             Column {
-                                Row(Modifier.fillMaxWidth().clickable {
-                                    if (card is DataStoreHelper.ResumeWatchingResult) SearchHelper.handleSearchClickCallback(SearchClickCallback(SEARCH_ACTION_PLAY_FILE, requireView(), -1, card))
-                                    else loadSearchResult(card)
-                                }, horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.fillMaxWidth().clickable { openItem(card) },
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                     CeliumArtwork(card.posterUrl, card.posterHeaders, Modifier.width(72.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)))
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text(card.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text(card.apiName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (card is DataStoreHelper.ResumeWatchingResult) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = MaterialTheme.colorScheme.secondaryContainer
+                                            ) {
+                                                Text(
+                                                    text = categoryLabel(card),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                )
+                                            }
+                                            Text(card.apiName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        if (card is DataStoreHelper.ResumeWatchingResult && !isGame(card)) {
                                             if (card.episode != null) Text("Season ${card.season ?: 1} · Episode ${card.episode}", style = MaterialTheme.typography.bodySmall)
                                             val position = card.watchPos
-                                            if (position != null && position.duration > 0) LinearProgressIndicator(progress = { (position.position.toFloat() / position.duration).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                                            if (position != null && position.duration > 0 && position.position > 0) {
+                                                LinearProgressIndicator(
+                                                    progress = { (position.position.toFloat() / position.duration).coerceIn(0f, 1f) },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
                                         }
                                     }
                                 }
                                 Row {
-                                    TextButton(onClick = { loadSearchResult(card) }) { Text("Details") }
+                                    TextButton(onClick = {
+                                        if (isGame(card)) openItem(card) else loadSearchResult(card)
+                                    }) { Text("Details") }
                                     TextButton(onClick = { remove(card, tab == "History") }) { Text(if (tab == "History") "Remove from history" else "Remove saved") }
                                 }
                                 HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)

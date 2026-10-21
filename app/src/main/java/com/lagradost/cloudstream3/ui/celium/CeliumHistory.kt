@@ -35,7 +35,7 @@ object CeliumHistory {
             apiName = "PornGamesHub",
             type = TvType.NSFW,
             posterUrl = posterUrl,
-            watchPos = DataStoreHelper.PosDur(1000L, 2000L),
+            watchPos = DataStoreHelper.PosDur(0L, 0L),
             id = gameId,
             parentId = gameId,
             episode = null,
@@ -50,7 +50,13 @@ object CeliumHistory {
         return getKeys(folder()).orEmpty()
             .mapNotNull { getKey<Entry>(it) }
             .sortedByDescending { it.watchedAt }
-            .map { it.card }
+            .map { entry ->
+                val card = entry.card
+                val livePos = DataStoreHelper.getViewPos(card.id)
+                if (livePos != null && livePos.duration > 0) {
+                    card.copy(watchPos = livePos)
+                } else card
+            }
             .filter { allowAdult || it.type != TvType.NSFW }
     }
 

@@ -37,6 +37,9 @@ open class CeliumFragment : BaseComposeFragment() {
             onMore = model::more, onMoreSearch = model::moreSearch,
             onSections = model::moreSections, onRetry = model::retry,
             onRetryPaging = model::retryPaging, onRetrySlot = model::retrySlot,
+            randomEnabled = randomEnabled,
+            getScroll = model::getScroll,
+            setScroll = model::setScroll,
             onOpen = { card, play ->
                 if (card is DataStoreHelper.ResumeWatchingResult) {
                     SearchHelper.handleSearchClickCallback(SearchClickCallback(SEARCH_ACTION_PLAY_FILE, requireView(), -1, card))

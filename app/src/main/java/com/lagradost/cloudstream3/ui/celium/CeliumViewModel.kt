@@ -894,6 +894,16 @@ class CeliumViewModel : ViewModel() {
         return CeliumSources.orderedPool(ordered, resolved.keys).map { it to resolved.getValue(it.id) }
     }
 
+    private val scrollOffsets = mutableMapOf<String, Pair<Int, Int>>()
+
+    fun getScroll(key: String): Pair<Int, Int> = scrollOffsets[key] ?: Pair(0, 0)
+
+    fun setScroll(key: String, index: Int, offset: Int) {
+        if (index >= 0 && offset >= 0) {
+            scrollOffsets[key] = Pair(index, offset)
+        }
+    }
+
     private fun loadResume() {
         resumeJob?.cancel()
         val current = _state.value
