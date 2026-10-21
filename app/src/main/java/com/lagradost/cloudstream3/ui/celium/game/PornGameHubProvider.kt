@@ -45,16 +45,24 @@ object PornGameHubProvider {
         CategorySpec("pgh_best", "Top Rated", "/best"),
         CategorySpec("pgh_new", "New Releases", "/new"),
         CategorySpec("pgh_cheating", "Cheating Stories", "/cheating"),
+        CategorySpec("pgh_corruption", "Corruption & Moral Decline", "/corruption"),
+        CategorySpec("pgh_stepmom", "StepMom Stories", "/stepmom"),
+        CategorySpec("pgh_stepsister", "StepSister Stories", "/stepsister"),
+        CategorySpec("pgh_college", "College & Campus Life", "/college"),
+        CategorySpec("pgh_school", "School & Academy", "/school"),
+        CategorySpec("pgh_teacher", "Teacher & Student", "/teacher"),
+        CategorySpec("pgh_threesome", "Threesome & Group", "/threesome"),
+        CategorySpec("pgh_bdsm", "BDSM & Femdom", "/bdsm"),
+        CategorySpec("pgh_futanari", "Futanari", "/futanari"),
+        CategorySpec("pgh_succubus", "Monster Girl & Succubus", "/succubus"),
+        CategorySpec("pgh_incest", "Taboo Family Stories", "/incest"),
         CategorySpec("pgh_female_lead", "Female Protagonist", "/female-protagonist"),
         CategorySpec("pgh_male_lead", "Male Protagonist & Harem", "/harem"),
         CategorySpec("pgh_erotic", "Erotic & Romance", "/erotic"),
         CategorySpec("pgh_dating", "Dating Simulation", "/dating"),
         CategorySpec("pgh_milf", "MILF Stories", "/milf"),
         CategorySpec("pgh_vn", "Visual Novels", "/visual-novels"),
-        CategorySpec("pgh_3d", "3D Games", "/3d"),
-        CategorySpec("pgh_2d", "2D Games", "/2d"),
-        CategorySpec("pgh_rpg", "RPG & Adventure", "/rpg"),
-        CategorySpec("pgh_parody", "Parody Games", "/parody")
+        CategorySpec("pgh_rpg", "RPG & Adventure", "/rpg")
     )
 
     // Curated flagship selection for ultra-fast Celium Feed loading

@@ -1,8 +1,6 @@
 package com.lagradost.cloudstream3.ui.celium.game
 
 import android.annotation.SuppressLint
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
@@ -46,6 +44,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.USER_AGENT
+import com.lagradost.cloudstream3.ui.celium.CeliumHistory
 import com.lagradost.cloudstream3.ui.celium.CeliumTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -63,6 +62,7 @@ class CeliumGameActivity : ComponentActivity() {
         const val EXTRA_GAME_ID = "extra_game_id"
         const val EXTRA_GAME_TITLE = "extra_game_title"
         const val EXTRA_PLAY_URL = "extra_play_url"
+        const val EXTRA_POSTER_URL = "extra_poster_url"
 
         private val BLOCKED_HOSTS = listOf(
             "adsterra", "exoclick", "trafficjunky", "popads", "hilltopads",
@@ -83,12 +83,16 @@ class CeliumGameActivity : ComponentActivity() {
         gameId = intent.getStringExtra(EXTRA_GAME_ID).orEmpty().ifBlank { "unknown_game" }
         gameTitle = intent.getStringExtra(EXTRA_GAME_TITLE).orEmpty().ifBlank { "Story Game" }
         rawPlayUrl = intent.getStringExtra(EXTRA_PLAY_URL).orEmpty()
+        val gamePoster = intent.getStringExtra(EXTRA_POSTER_URL).orEmpty()
 
         if (rawPlayUrl.isBlank()) {
             Toast.makeText(this, "Game play URL is missing.", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
+
+        // Record to Celium History / Resume shelf
+        CeliumHistory.recordGame(gameTitle, gameId, gamePoster.ifBlank { null })
 
         // Record last played timestamp for intelligent frame cache lifecycle
         CeliumGameCacheManager.recordGamePlayed(this, gameId)
@@ -103,9 +107,6 @@ class CeliumGameActivity : ComponentActivity() {
     @Composable
     private fun GameScreenSurface() {
         var menuOpen by remember { mutableStateOf(false) }
-        var importOpen by remember { mutableStateOf(false) }
-        var importText by remember { mutableStateOf("") }
-        var lastSavedAt by remember { mutableStateOf(CeliumGameSaveStore.load(gameId)?.timestamp ?: 0L) }
         var isLandscape by remember { mutableStateOf(false) }
 
         // Dynamic Loading & Engine Readiness States
@@ -125,7 +126,7 @@ class CeliumGameActivity : ComponentActivity() {
                 factory = { ctx ->
                     createGameWebView(
                         context = ctx,
-                        onSaveUpdate = { ts -> runOnUiThread { lastSavedAt = ts } },
+                        onSaveUpdate = { /* native IndexedDB handles persistence */ },
                         onProgress = { pct, status ->
                             runOnUiThread {
                                 if (pct > loadingProgress) loadingProgress = pct
@@ -230,54 +231,23 @@ class CeliumGameActivity : ComponentActivity() {
                 )
             }
 
-            // Quick Control Bottom Sheet / Dialog
+            // Quick Control Dialog
             if (menuOpen) {
                 AlertDialog(
                     onDismissRequest = { menuOpen = false },
                     title = { Text(gameTitle, maxLines = 1) },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            val statusText = if (lastSavedAt > 0) {
-                                val agoSeconds = maxOf(0L, (System.currentTimeMillis() - lastSavedAt) / 1000L)
-                                if (agoSeconds < 60) "Auto-saved just now" else "Auto-saved ${agoSeconds / 60}m ago"
-                            } else "No save recorded yet"
-
-                            Text(statusText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "Game engine auto-saves progress and choices locally.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
 
                             HorizontalDivider()
 
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        val snapshot = CeliumGameSaveStore.load(gameId)
-                                        if (snapshot != null && snapshot.exportCode.isNotBlank()) {
-                                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("Celium Game Save", snapshot.exportCode))
-                                            Toast.makeText(this@CeliumGameActivity, "Save code copied to clipboard", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(this@CeliumGameActivity, "No save data to export", Toast.LENGTH_SHORT).show()
-                                        }
-                                        menuOpen = false
-                                    }
-                                ) {
-                                    Text("Export Save", fontSize = 13.sp)
-                                }
-
                                 OutlinedButton(
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        importText = ""
-                                        importOpen = true
-                                        menuOpen = false
-                                    }
-                                ) {
-                                    Text("Import Save", fontSize = 13.sp)
-                                }
-                            }
-
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(
                                     modifier = Modifier.weight(1f),
                                     onClick = {
                                         isLandscape = !isLandscape
@@ -289,17 +259,17 @@ class CeliumGameActivity : ComponentActivity() {
                                         menuOpen = false
                                     }
                                 ) {
-                                    Text(if (isLandscape) "Portrait" else "Landscape")
+                                    Text(if (isLandscape) "Portrait" else "Landscape", fontSize = 13.sp)
                                 }
 
-                                TextButton(
+                                OutlinedButton(
                                     modifier = Modifier.weight(1f),
                                     onClick = {
                                         menuOpen = false
                                         webView?.reload()
                                     }
                                 ) {
-                                    Text("Reload")
+                                    Text("Reload", fontSize = 13.sp)
                                 }
                             }
                         }
@@ -309,46 +279,6 @@ class CeliumGameActivity : ComponentActivity() {
                     },
                     dismissButton = {
                         TextButton(onClick = { finish() }) { Text("Exit Game", color = MaterialTheme.colorScheme.error) }
-                    }
-                )
-            }
-
-            // Import Save Dialog
-            if (importOpen) {
-                AlertDialog(
-                    onDismissRequest = { importOpen = false },
-                    title = { Text("Import Save Code") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Paste your exported base64 save string below:", style = MaterialTheme.typography.bodySmall)
-                            OutlinedTextField(
-                                value = importText,
-                                onValueChange = { importText = it },
-                                modifier = Modifier.fillMaxWidth().height(120.dp),
-                                placeholder = { Text("Paste save code here...") }
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (importText.isNotBlank()) {
-                                    val success = CeliumGameSaveStore.importFromCode(gameId, importText)
-                                    if (success) {
-                                        Toast.makeText(this@CeliumGameActivity, "Save restored. Reloading game...", Toast.LENGTH_SHORT).show()
-                                        webView?.reload()
-                                    } else {
-                                        Toast.makeText(this@CeliumGameActivity, "Invalid save code format", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                                importOpen = false
-                            }
-                        ) {
-                            Text("Apply & Reload")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { importOpen = false }) { Text("Cancel") }
                     }
                 )
             }

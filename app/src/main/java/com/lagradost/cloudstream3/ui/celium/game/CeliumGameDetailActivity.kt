@@ -48,8 +48,6 @@ class CeliumGameDetailActivity : ComponentActivity() {
         const val EXTRA_POSTER_URL = "extra_poster_url"
     }
 
-    private var currentSaveSnapshot by mutableStateOf<CeliumGameSaveSnapshot?>(null)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -63,8 +61,6 @@ class CeliumGameDetailActivity : ComponentActivity() {
             return
         }
 
-        refreshSaveState()
-
         setContent {
             CeliumTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -74,47 +70,14 @@ class CeliumGameDetailActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        refreshSaveState()
-    }
-
-    private fun refreshSaveState() {
-        currentSaveSnapshot = CeliumGameSaveStore.load(gameUrl)
-    }
-
-    private fun launchGame(targetUrl: String, title: String) {
+    private fun launchGame(targetUrl: String, title: String, poster: String?) {
         val intent = Intent(this, CeliumGameActivity::class.java).apply {
             putExtra(CeliumGameActivity.EXTRA_GAME_ID, gameUrl)
             putExtra(CeliumGameActivity.EXTRA_GAME_TITLE, title)
             putExtra(CeliumGameActivity.EXTRA_PLAY_URL, targetUrl)
+            putExtra(CeliumGameActivity.EXTRA_POSTER_URL, poster)
         }
         startActivity(intent)
-    }
-
-    private fun copyExportCodeToClipboard(code: String) {
-        if (code.isBlank()) {
-            Toast.makeText(this, "No save data available to export", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Celium Game Save Code", code))
-        Toast.makeText(this, "Save code copied to clipboard", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun formatSaveAge(timestamp: Long): String {
-        if (timestamp <= 0L) return "No save found"
-        val diffMs = System.currentTimeMillis() - timestamp
-        val seconds = maxOf(0L, diffMs / 1000L)
-        val minutes = seconds / 60L
-        val hours = minutes / 60L
-        val days = hours / 24L
-        return when {
-            seconds < 60L -> "Saved just now"
-            minutes < 60L -> "Saved $minutes min ago"
-            hours < 24L -> "Saved $hours hr ago"
-            else -> "Saved $days days ago"
-        }
     }
 
     @Composable
@@ -130,8 +93,6 @@ class CeliumGameDetailActivity : ComponentActivity() {
             )
         }
         var previewImage by remember { mutableStateOf<String?>(null) }
-        var importDialogOpen by remember { mutableStateOf(false) }
-        var importInputText by remember { mutableStateOf("") }
         val refererUrl = PornGameHubProvider.MAIN_URL
         val scope = rememberCoroutineScope()
 
@@ -300,103 +261,15 @@ class CeliumGameDetailActivity : ComponentActivity() {
                         }
                     }
 
-                    // Save Progress & Sync Status Card
-                    item("save_status_card") {
-                        val snapshot = currentSaveSnapshot
-                        val hasSave = snapshot != null && snapshot.localStorageDump.isNotEmpty()
 
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            tonalElevation = 2.dp
-                        ) {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Box(
-                                        Modifier
-                                            .size(10.dp)
-                                            .clip(CircleShape)
-                                            .background(if (hasSave) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
-                                    )
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            text = if (hasSave) "Auto-saved Progress Found" else "No Saved Progress",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Text(
-                                            text = if (snapshot != null && snapshot.localStorageDump.isNotEmpty()) {
-                                                "${formatSaveAge(snapshot.timestamp)} (${snapshot.localStorageDump.size} variables stored)"
-                                            } else {
-                                                "Your narrative choices and progress will save automatically."
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
 
-                                Row(
-                                    Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedButton(
-                                        modifier = Modifier.weight(1f),
-                                        onClick = {
-                                            val code = snapshot?.exportCode.orEmpty()
-                                            copyExportCodeToClipboard(code)
-                                        },
-                                        enabled = hasSave
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_outline_share_24),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Export Save", fontSize = 12.sp)
-                                    }
-
-                                    OutlinedButton(
-                                        modifier = Modifier.weight(1f),
-                                        onClick = {
-                                            importInputText = ""
-                                            importDialogOpen = true
-                                        }
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.baseline_save_as_24),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Import Save", fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Primary Play / Resume CTA Button
+                    // Primary Play CTA Button
                     item("play_action") {
-                        val snapshot = currentSaveSnapshot
-                        val hasSave = snapshot != null && snapshot.localStorageDump.isNotEmpty()
                         val isResolving = isLoading && current.playUrl.isNullOrBlank()
 
                         Button(
                             onClick = {
-                                launchGame(current.playUrl ?: current.url, current.name)
+                                launchGame(current.playUrl ?: current.url, current.name, current.posterUrl ?: initialPoster)
                             },
                             enabled = !isResolving,
                             modifier = Modifier
@@ -429,7 +302,7 @@ class CeliumGameDetailActivity : ComponentActivity() {
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = if (hasSave) "RESUME STORY" else "PLAY GAME",
+                                    text = "PLAY GAME",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -612,52 +485,6 @@ class CeliumGameDetailActivity : ComponentActivity() {
                 }
             }
 
-            // Import Save Dialog
-            if (importDialogOpen) {
-                AlertDialog(
-                    onDismissRequest = { importDialogOpen = false },
-                    title = { Text("Import Save Progress") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "Paste your exported Base64 save code below to restore progress:",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            OutlinedTextField(
-                                value = importInputText,
-                                onValueChange = { importInputText = it },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(130.dp),
-                                placeholder = { Text("Paste save code here...") }
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (importInputText.isNotBlank()) {
-                                    val success = CeliumGameSaveStore.importFromCode(gameUrl, importInputText)
-                                    if (success) {
-                                        refreshSaveState()
-                                        Toast.makeText(this@CeliumGameDetailActivity, "Save progress restored successfully", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(this@CeliumGameDetailActivity, "Invalid save code format", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                                importDialogOpen = false
-                            }
-                        ) {
-                            Text("Restore Progress")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { importDialogOpen = false }) {
-                            Text("Cancel")
-                        }
-                    }
-                )
-            }
         }
     }
 }

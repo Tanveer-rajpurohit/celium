@@ -13,13 +13,7 @@ import kotlinx.coroutines.withContext
 object CeliumGameRepository {
 
     suspend fun getMainPage(sourceId: String, page: Int = 1): List<CeliumShelf> = withContext(Dispatchers.IO) {
-        when (sourceId) {
-            "porngamehub", "porngameshub" -> PornGameHubProvider.getMainPage(page)
-            else -> {
-                // Curated Celium Feed: ultra-fast flagship shelves from PornGamesHub
-                PornGameHubProvider.getCuratedShelves(page)
-            }
-        }
+        PornGameHubProvider.getMainPage(page)
     }
 
     suspend fun search(sourceId: String, query: String, page: Int = 1): List<CeliumTile> = withContext(Dispatchers.IO) {

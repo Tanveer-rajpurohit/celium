@@ -4,6 +4,8 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKeys
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.removeKey
+import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.utils.DataStoreHelper
 import com.lagradost.cloudstream3.utils.DOWNLOAD_HEADER_CACHE
 import com.lagradost.cloudstream3.utils.DOWNLOAD_HEADER_CACHE_BACKUP
@@ -25,8 +27,32 @@ object CeliumHistory {
         setKey(folder(), parentId.toString(), Entry(System.currentTimeMillis(), card))
     }
 
-    fun all(): List<DataStoreHelper.ResumeWatchingResult> =
-        getKeys(folder()).orEmpty().mapNotNull { getKey<Entry>(it) }.sortedByDescending { it.watchedAt }.map { it.card }
+    fun recordGame(name: String, url: String, posterUrl: String?) {
+        val gameId = url.hashCode()
+        val card = DataStoreHelper.ResumeWatchingResult(
+            name = name,
+            url = url,
+            apiName = "PornGamesHub",
+            type = TvType.NSFW,
+            posterUrl = posterUrl,
+            watchPos = DataStoreHelper.PosDur(1000L, 2000L),
+            id = gameId,
+            parentId = gameId,
+            episode = null,
+            season = null,
+            isFromDownload = false
+        )
+        setKey(folder(), gameId.toString(), Entry(System.currentTimeMillis(), card))
+    }
+
+    fun all(): List<DataStoreHelper.ResumeWatchingResult> {
+        val allowAdult = MainAPI.settingsForProvider.enableAdult
+        return getKeys(folder()).orEmpty()
+            .mapNotNull { getKey<Entry>(it) }
+            .sortedByDescending { it.watchedAt }
+            .map { it.card }
+            .filter { allowAdult || it.type != TvType.NSFW }
+    }
 
     fun remove(parentId: Int?) {
         if (parentId != null) removeKey(folder(), parentId.toString())
