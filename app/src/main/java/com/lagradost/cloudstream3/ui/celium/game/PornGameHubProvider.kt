@@ -432,152 +432,148 @@ object PornGameHubProvider {
 
     suspend fun getCuratedShelves(page: Int = 1): List<CeliumShelf> = fetchShelves(curatedCategories, page)
 
+    private fun parseJsonHits(jsonText: String): List<CeliumGameTile> {
+        val games = mutableListOf<CeliumGameTile>()
+        try {
+            val trimmed = jsonText.trim()
+            val root = when {
+                trimmed.startsWith("{") -> {
+                    val obj = JSONObject(trimmed)
+                    val jinaData = obj.optJSONObject("data")
+                    val contentStr = jinaData?.optString("content")
+                    if (!contentStr.isNullOrBlank() && contentStr.trim().startsWith("{")) {
+                        JSONObject(contentStr)
+                    } else {
+                        obj
+                    }
+                }
+                else -> null
+            }
+
+            val hitsArr = root?.optJSONArray("hits")
+                ?: root?.optJSONArray("data")
+                ?: root?.optJSONArray("results")
+                ?: root?.optJSONArray("items")
+
+            if (hitsArr != null) {
+                for (i in 0 until hitsArr.length()) {
+                    val item = hitsArr.optJSONObject(i) ?: continue
+                    val title = item.optString("title").ifBlank { item.optString("name") }.trim()
+                    val relUrl = item.optString("url").ifBlank { item.optString("link") }.trim()
+                    if (title.isBlank() || relUrl.isBlank()) continue
+                    val fullUrl = cleanUrl(relUrl)
+                    if (!isGame(title, fullUrl)) continue
+
+                    val rawImg = item.optString("img").ifBlank { item.optString("poster") }.trim()
+                    val posterUrl = if (rawImg.isNotBlank()) cleanUrl(rawImg) else null
+
+                    val engine = when {
+                        title.contains("Ren'Py", true) -> "Ren'Py Web"
+                        title.contains("Twine", true) -> "Twine"
+                        title.contains("Unity", true) -> "Unity WebGL"
+                        else -> "HTML5"
+                    }
+
+                    games.add(
+                        CeliumGameTile(
+                            name = title,
+                            url = fullUrl,
+                            apiName = "PornGamesHub",
+                            type = TvType.NSFW,
+                            posterUrl = posterUrl,
+                            posterHeaders = mapOf("Referer" to MAIN_URL),
+                            engine = engine
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            logError(e)
+        }
+        return games.distinctBy { it.url }
+    }
+
     suspend fun search(query: String, page: Int = 1): List<CeliumTile> = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) return@withContext emptyList()
         try {
-            val encoded = java.net.URLEncoder.encode(cleanQuery, "UTF-8")
-            val slug = cleanQuery.lowercase(java.util.Locale.ROOT).replace(Regex("[^a-z0-9]+"), "-").trim('-')
-            val plusQuery = cleanQuery.replace(" ", "+")
+            val queriesToTry = mutableListOf(cleanQuery)
+            // Strip modifiers like "dlc", "edition", "game", "mod" to broaden match
+            val stripped = cleanQuery.replace(Regex("""(?i)\b(dlc|edition|game|mod|special|version|v\d+)\b"""), "").trim().replace(Regex("""\s+"""), " ")
+            if (stripped.length >= 2 && !stripped.equals(cleanQuery, ignoreCase = true)) {
+                queriesToTry.add(stripped)
+            }
 
-            // 1. Direct game slug probe (e.g. /heritage, /medical-species-care, /medical-species-care-2)
-            val directSlugs = listOfNotNull(
-                slug,
-                if (!slug.endsWith("-2")) "$slug-2" else null,
-                if (!slug.endsWith("-game")) "$slug-game" else null
-            )
-            val directMatches = directSlugs.map { s ->
-                async {
+            for (q in queriesToTry) {
+                val encoded = java.net.URLEncoder.encode(q, "UTF-8")
+                val searchUrl = "https://s.porngameshub.com?q=$encoded"
+                val searchHeaders = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Accept" to "application/json, text/plain, */*",
+                    "Origin" to MAIN_URL,
+                    "Referer" to "$MAIN_URL/"
+                )
+
+                // 1. Direct official PornGamesHub live search API
+                var jsonResponse: String? = null
+                try {
+                    val resp = app.get(searchUrl, headers = searchHeaders, timeout = 3_500L)
+                    if (resp.code in 200..299 && resp.text.length > 10) {
+                        jsonResponse = resp.text
+                    }
+                } catch (e: Exception) {
+                    logError(e)
+                }
+
+                // 2. Resilient fallback for ISP-blocked networks
+                if (jsonResponse.isNullOrBlank()) {
                     try {
-                        val gameUrl = "$MAIN_URL/$s"
-                        val doc = fetchHtmlDocument(gameUrl) ?: return@async null
-                        val docTitle = doc.title().trim()
-                        val canonical = doc.selectFirst("link[rel=canonical]")?.attr("href")?.trim().orEmpty()
-                        if (canonical == MAIN_URL || canonical == "$MAIN_URL/" ||
-                            docTitle.startsWith("Free Porn Games - Play", ignoreCase = true) ||
-                            docTitle.equals("PornGamesHub", ignoreCase = true)
-                        ) {
-                            return@async null
+                        val proxyUrl = "https://r.jina.ai/$searchUrl"
+                        val proxyResp = app.get(
+                            proxyUrl,
+                            headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "application/json"),
+                            timeout = 5_000L
+                        )
+                        if (proxyResp.code in 200..299 && proxyResp.text.length > 10) {
+                            jsonResponse = proxyResp.text
                         }
-                        val title = doc.selectFirst("h1")?.text()?.trim()
-                            ?: docTitle.substringBefore("|").substringBefore("- Porn").trim()
-                        if (isGame(title, gameUrl) && (
-                            com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, title) > 0 ||
-                            title.contains(cleanQuery, ignoreCase = true)
-                        )) {
-                            val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
-                                ?: doc.selectFirst(".game-poster img, .thumbnail img, img.cover, img")?.attr("src")?.trim()
-                            val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim().orEmpty()
-                            CeliumGameTile(
-                                name = title,
-                                url = gameUrl,
-                                apiName = "PornGamesHub",
-                                type = TvType.NSFW,
-                                posterUrl = poster?.let { cleanUrl(it) },
-                                posterHeaders = mapOf("Referer" to MAIN_URL),
-                                description = desc
-                            )
-                        } else null
                     } catch (e: Exception) {
-                        null
+                        logError(e)
                     }
                 }
-            }.awaitAll().filterNotNull()
 
-            // 2. Live search & API candidate endpoints
-            val apiEndpoints = listOf(
-                "$MAIN_URL/api/search?q=$encoded",
-                "$MAIN_URL/api/search?keyword=$encoded",
-                "$MAIN_URL/api/search?search=$encoded",
-                "$MAIN_URL/api/games?search=$encoded",
-                "$MAIN_URL/api/games?q=$encoded",
-                "$MAIN_URL/search?q=$encoded",
-                "$MAIN_URL/ajax/search?q=$encoded",
-                "$MAIN_URL/live-search?q=$encoded"
-            )
-            for (apiUrl in apiEndpoints) {
-                val results = fetchSearchResponse(apiUrl, isApi = true).filter { isGame(it.name, it.url) }
-                val matches = results.filter {
-                    com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name) > 0 ||
-                    it.name.contains(cleanQuery, ignoreCase = true) ||
-                    it.description.contains(cleanQuery, ignoreCase = true)
-                }
-                if (matches.isNotEmpty()) {
-                    val allFound = (directMatches + matches).distinctBy { it.url }
-                    return@withContext allFound.sortedByDescending {
-                        com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name)
-                    }.map { CeliumTile.from(it) }
+                if (!jsonResponse.isNullOrBlank()) {
+                    val tiles = parseJsonHits(jsonResponse)
+                    if (tiles.isNotEmpty()) {
+                        return@withContext tiles.sortedByDescending {
+                            com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name)
+                        }.map { CeliumTile.from(it) }
+                    }
                 }
             }
 
-            // 3. Standard site search URLs (HTML or SSR pages)
-            val matchedCat = categories.firstOrNull {
-                it.title.contains(cleanQuery, ignoreCase = true) ||
-                it.path.trim('/').equals(slug, ignoreCase = true)
-            }
-
-            val htmlEndpoints = mutableListOf<String>()
-            if (page > 1) {
-                htmlEndpoints.add("$MAIN_URL/?search=$plusQuery&page=$page")
-                htmlEndpoints.add("$MAIN_URL/search/$slug/$page")
-                htmlEndpoints.add("$MAIN_URL/search/$encoded/$page")
-                htmlEndpoints.add("$MAIN_URL/search?q=$encoded&page=$page")
-                htmlEndpoints.add("$MAIN_URL/?s=$encoded&page=$page")
-                if (matchedCat != null) htmlEndpoints.add("$MAIN_URL${matchedCat.path}/$page")
-            } else {
-                htmlEndpoints.add("$MAIN_URL/?search=$plusQuery")
-                htmlEndpoints.add("$MAIN_URL/search/$slug")
-                htmlEndpoints.add("$MAIN_URL/search/$encoded")
-                htmlEndpoints.add("$MAIN_URL/search?q=$encoded")
-                htmlEndpoints.add("$MAIN_URL/?s=$encoded")
-                if (matchedCat != null) htmlEndpoints.add("$MAIN_URL${matchedCat.path}")
-            }
-
-            for (targetUrl in htmlEndpoints) {
-                val results = fetchSearchResponse(targetUrl, isApi = false).filter { isGame(it.name, it.url) }
-                val matches = results.filter {
-                    com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name) > 0 ||
-                    it.name.contains(cleanQuery, ignoreCase = true) ||
-                    it.description.contains(cleanQuery, ignoreCase = true)
-                }
-                if (matches.isNotEmpty()) {
-                    val allFound = (directMatches + matches).distinctBy { it.url }
-                    return@withContext allFound.sortedByDescending {
-                        com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name)
-                    }.map { CeliumTile.from(it) }
-                }
-            }
-
-            // 4. Deep parallel search across flagship story / VN / RPG / popular categories
-            val deepCategories = listOf(
+            // 3. Fallback: targeted category scan
+            val fallbackCategories = listOf(
                 CategorySpec("pgh_vn", "Visual Novels", "/visual-novels"),
-                CategorySpec("pgh_vn_2", "Visual Novels P2", "/visual-novels/2"),
                 CategorySpec("pgh_popular", "Popular Games", "/popular"),
-                CategorySpec("pgh_updated", "Recently Updated", "/updated"),
-                CategorySpec("pgh_best", "Top Rated", "/best"),
-                CategorySpec("pgh_new", "New Releases", "/new"),
-                CategorySpec("pgh_rpg", "RPG", "/rpg"),
-                CategorySpec("pgh_cheating", "Cheating Stories", "/cheating")
+                CategorySpec("pgh_best", "Top Rated", "/best")
             )
-            val parallelCards = deepCategories.map { cat ->
+            val parallelCards = fallbackCategories.map { cat ->
                 async {
-                    val pageUrl = if (page > 1) "$MAIN_URL${cat.path}/$page" else "$MAIN_URL${cat.path}"
+                    val pageUrl = "$MAIN_URL${cat.path}"
                     fetchSearchResponse(pageUrl, isApi = false).filter { isGame(it.name, it.url) }
                 }
             }.awaitAll().flatten().distinctBy { it.url }
 
             val filtered = parallelCards.filter {
                 com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name) > 0 ||
-                it.name.contains(cleanQuery, ignoreCase = true) ||
-                it.description.contains(cleanQuery, ignoreCase = true)
-            }
-
-            val combined = (directMatches + filtered).distinctBy { it.url }.sortedByDescending {
+                it.name.contains(cleanQuery, ignoreCase = true)
+            }.sortedByDescending {
                 com.lagradost.cloudstream3.ui.search.SearchRanking.score(cleanQuery, it.name)
             }
 
-            if (combined.isNotEmpty()) {
-                return@withContext combined.map { CeliumTile.from(it) }
+            if (filtered.isNotEmpty()) {
+                return@withContext filtered.map { CeliumTile.from(it) }
             }
             emptyList()
         } catch (e: Exception) {
