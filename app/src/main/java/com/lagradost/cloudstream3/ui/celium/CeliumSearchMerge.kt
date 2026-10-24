@@ -87,6 +87,7 @@ internal object CeliumSearchMerge {
         section == CeliumSection.Movies -> { r -> r.type == TvType.Movie || r.type == TvType.AnimeMovie }
         section == CeliumSection.Series -> { r -> r.type == TvType.TvSeries || r.type == TvType.AsianDrama }
         section == CeliumSection.Anime -> { r -> r.type == TvType.Anime || r.type == TvType.AnimeMovie || r.type == TvType.OVA }
+        section == CeliumSection.Adult || section == CeliumSection.AdultGames -> { r -> CeliumSources.isAdult(r.type, r.apiName) || r.type == TvType.NSFW }
         else -> { _ -> false }
     }
 }

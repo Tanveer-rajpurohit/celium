@@ -6,6 +6,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,8 +20,10 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -78,6 +81,12 @@ fun CeliumScreen(
     // Header stays fully visible while typing a query or while touch exploration is on (11.5, 11.10).
     val locked = (searchMode && searchFocused) || touchExploring
     SideEffect { if (quickReturn.locked != locked) quickReturn.locked = locked }
+    val feedKey = "${state.home}_${state.section.name}_${state.source.id}_$scrollTrigger"
+    val initialScrollPos = remember(feedKey) { getScroll(feedKey) }
+    val feedList = rememberSaveable(feedKey, saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+        androidx.compose.foundation.lazy.LazyListState(initialScrollPos.first, initialScrollPos.second)
+    }
+    var userHasScrolled by remember(feedKey) { mutableStateOf(initialScrollPos.first > 0 || initialScrollPos.second > 0) }
     CeliumTheme {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             BoxWithConstraints {
@@ -87,7 +96,7 @@ fun CeliumScreen(
                 val medium = if (maxWidth >= 840.dp) 168.dp else ((maxWidth - 44.dp) / 2.25f).coerceIn(132.dp, 160.dp)
                 val width = rememberCeliumCardWidth(medium)
                 QuickReturnLayout(quickReturn, Modifier.fillMaxSize(), header = { Column {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = edge).height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (!searchMode) Row(Modifier.fillMaxWidth().padding(horizontal = edge).height(56.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(if (searchMode) "Search" else "celium", Modifier.weight(1f).semantics { heading() },
                             fontSize = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.6).sp)
                         TextButton(onClick = { sourceSheet = true }) {
@@ -99,23 +108,96 @@ fun CeliumScreen(
                         }
                     }
                     if (searchMode) {
-                        if (state.source.id == "celium" && state.searchAllSources) Text(
-                            "Searches all ${if (state.section == CeliumSection.Movies || state.section == CeliumSection.Series) "Movies and TV Shows" else state.section.label} sources. Pick a source above to search only it.",
-                            Modifier.padding(horizontal = edge, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        else if (state.source.id == "celium") Text("Celium Feed searches its first ready source. Choose a source for other results.",
-                            Modifier.padding(horizontal = edge, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val focus = LocalFocusManager.current
-                        OutlinedTextField(state.query, onQuery, Modifier.fillMaxWidth().padding(horizontal = edge, vertical = 8.dp)
-                            .onFocusChanged { searchFocused = it.isFocused },
-                            placeholder = { Text("Search ${state.section.label.lowercase()}") },
-                            leadingIcon = { Icon(painterResource(R.drawable.search_icon), null, Modifier.size(22.dp)) },
-                            trailingIcon = if (state.query.isNotEmpty()) ({ TextButton(onClick = { onQuery("") }) { Text("Clear") } }) else null,
-                            singleLine = true, shape = RoundedCornerShape(12.dp),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { focus.clearFocus(); onQuery(state.query) }))
+                        Row(Modifier.fillMaxWidth().padding(start = edge, end = edge, top = 8.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.search_icon),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier.weight(1f),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (state.query.isEmpty()) {
+                                            Text(
+                                                text = if (state.home) "Search Celium" else "Search ${state.section.label.lowercase()}",
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                            )
+                                        }
+                                        BasicTextField(
+                                            value = state.query,
+                                            onValueChange = onQuery,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .onFocusChanged { searchFocused = it.isFocused },
+                                            singleLine = true,
+                                            maxLines = 1,
+                                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            ),
+                                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                            keyboardActions = KeyboardActions(onSearch = {
+                                                focus.clearFocus()
+                                                onQuery(state.query)
+                                            })
+                                        )
+                                    }
+                                    if (state.query.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { onQuery("") },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_baseline_close_24),
+                                                contentDescription = "Clear",
+                                                modifier = Modifier.size(14.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            TextButton(
+                                onClick = { sourceSheet = true },
+                                modifier = Modifier.height(42.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Text(
+                                    state.source.label,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 88.dp),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                Text(" ▾", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
                     }
                 } }, pinned = { Column {
-                    LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    if (searchMode) SearchCategoryChips(state, edge, onHome, onSection)
+                    if (!searchMode) LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                         // Home is the first tab (Req 3); other tabs leave Home via selectSection.
                         item(key = "home") {
                             CategoryTab("Home", state.home) {
@@ -137,12 +219,7 @@ fun CeliumScreen(
                             onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn,
                             onFilter = onSearchFilter, onSearchIn = onSearchIn)
                         else {
-                        val feedKey = "${state.home}_${state.section.name}_${state.source.id}_$scrollTrigger"
-                        val initialScrollPos = remember(feedKey) { getScroll(feedKey) }
-                        val feedList = rememberSaveable(feedKey, saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
-                            androidx.compose.foundation.lazy.LazyListState(initialScrollPos.first, initialScrollPos.second)
-                        }
-                        var userHasScrolled by remember(feedKey) { mutableStateOf(initialScrollPos.first > 0 || initialScrollPos.second > 0) }
+                        // Feed scroll state is kept above (see feedKey), so it survives opening and closing search.
 
                         LaunchedEffect(feedList.isScrollInProgress) {
                             if (feedList.isScrollInProgress) {
@@ -332,7 +409,7 @@ private fun SearchContent(state: CeliumState, edge: Dp, width: Dp, onQuery: (Str
             state.searched -> "${state.results.size} results · ${state.source.label}"
             state.query.trim().length < 3 -> "Keep typing, or press Search."
             else -> "Checking ${state.source.label}…"
-        }, Modifier.padding(horizontal = edge, vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        }, Modifier.padding(horizontal = edge, vertical = 4.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         // Binding failures retry the provider (16.9); search failures repeat the query and keep shown results (16.8).
         if (bindFailure != null) TextButton(onClick = onRetry) { Text("Retry") }
         else if (state.searchError != null) TextButton(onClick = { onQuery(state.query) }) { Text("Retry search") }
@@ -368,8 +445,9 @@ private fun SearchContent(state: CeliumState, edge: Dp, width: Dp, onQuery: (Str
             status = if (state.searchHasNext && !state.searching) paging.status else PageStatus.End,
             onLoadMore = onMore,
         )
-        LazyVerticalGrid(GridCells.Adaptive(width), Modifier.weight(1f), state = grid, contentPadding = PaddingValues(edge),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        LazyVerticalGrid(GridCells.Adaptive(width), Modifier.weight(1f), state = grid,
+            contentPadding = PaddingValues(start = edge, end = edge, top = 4.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(shown, key = { "${it.apiName}:${it.url}" }, contentType = { "poster" }) { card ->
                 CeliumPoster(card, Modifier.fillMaxWidth()) { onOpen(card, false) }
             }
@@ -507,5 +585,16 @@ internal fun CeliumEmpty(title: String, text: String) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/** Compact category row shown while searching: Home and each section, so switching category keeps the query. */
+@Composable
+private fun SearchCategoryChips(state: CeliumState, edge: Dp, onHome: () -> Unit, onSection: (CeliumSection) -> Unit) {
+    LazyRow(contentPadding = PaddingValues(horizontal = edge, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item(key = "home") { FilterChip(state.home, onHome, { Text("Home") }) }
+        items(CeliumSection.entries.filter { state.adultEnabled || (it != CeliumSection.Adult && it != CeliumSection.AdultGames) }, key = { it.name }) { section ->
+            FilterChip(!state.home && state.section == section, { onSection(section) }, { Text(section.label) })
+        }
     }
 }

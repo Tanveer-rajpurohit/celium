@@ -833,26 +833,39 @@ class CeliumViewModel : ViewModel() {
             searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
                 delay(wait)
                 if (!liveSearch(token, sourceId)) return@gated
-                val local = withContext(Dispatchers.Default) {
-                    SearchRanking.rank(query, current.shelves.flatMap { it.cards })
-                        .filter { SearchRanking.score(query, it.name) > 0 }.map(CeliumTile::from)
-                }
-                if (!liveSearch(token, sourceId)) return@gated
-                _state.value = _state.value.copy(results = local)
+                _state.value = _state.value.copy(searching = true, searchError = null)
                 try {
                     val remote = com.lagradost.cloudstream3.ui.celium.game.CeliumGameRepository.search(sourceId, query, 1)
                     if (!liveSearch(token, sourceId)) return@gated
-                    val merged = (local + remote).distinctBy { it.url }
+                    val localMatches = SearchRanking.rank(query, current.shelves.flatMap { it.cards })
+                        .filter { com.lagradost.cloudstream3.ui.celium.game.PornGameHubProvider.isGame(it.name, it.url) && SearchRanking.score(query, it.name) > 0 }
+                        .map(CeliumTile::from)
+                    val combined = (remote + localMatches)
+                        .filter { com.lagradost.cloudstream3.ui.celium.game.PornGameHubProvider.isGame(it.name, it.url) }
+                        .distinctBy { it.url.ifBlank { it.name } }
+                    val results = withContext(Dispatchers.Default) {
+                        combined.sortedByDescending { SearchRanking.score(query, it.name) }
+                    }
                     _state.value = _state.value.copy(
-                        results = merged,
+                        results = results,
                         searching = false,
                         searched = true,
-                        searchError = if (merged.isEmpty()) "No games matching \"$query\" found." else null
+                        searchError = if (results.isEmpty()) "No games matching \"$query\" found." else null
                     )
                 } catch (e: Exception) {
                     logError(e)
                     if (liveSearch(token, sourceId)) {
-                        _state.value = _state.value.copy(searching = false, searched = true, searchError = if (local.isEmpty()) "Game search failed." else null)
+                        val fallback = withContext(Dispatchers.Default) {
+                            SearchRanking.rank(query, current.shelves.flatMap { it.cards })
+                                .filter { com.lagradost.cloudstream3.ui.celium.game.PornGameHubProvider.isGame(it.name, it.url) && SearchRanking.score(query, it.name) > 0 }
+                                .map(CeliumTile::from)
+                        }
+                        _state.value = _state.value.copy(
+                            results = fallback,
+                            searching = false,
+                            searched = true,
+                            searchError = if (fallback.isEmpty()) "Game search failed. Check your connection." else null
+                        )
                     }
                 }
             }

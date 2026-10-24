@@ -102,7 +102,18 @@ object CeliumSources {
         CeliumSection.AdultGames -> listOf(
             CeliumSource("porngameshub", "PornGamesHub", "PornGamesHub", "", adult = true, aliases = setOf("porngamehub", "PornGameHub"))
         )
-        CeliumSection.Adult -> listOf(curated(section)) + all.filter { enabled(it) && it.adult }
+        CeliumSection.Adult -> {
+            val configured = all.filter { enabled(it) && it.adult }
+            val configuredNames = configured.flatMap { listOf(it.id, it.label, it.plugin) + it.aliases }.map(::normalize).toSet()
+            val extraAdult = APIHolder.apis.withLock {
+                APIHolder.apis.filter { api ->
+                    TvType.NSFW in api.supportedTypes && normalize(api.name) !in configuredNames
+                }.map { api ->
+                    CeliumSource(api.name.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }, api.name, api.name, "", adult = true)
+                }
+            }
+            listOf(curated(section)) + (configured + extraAdult).filter { enabled(it) }
+        }
         CeliumSection.Anime -> listOf(curated(section)) + all.filter { enabled(it) && it.anime }
         else -> listOf(curated(section)) + all.filter { enabled(it) && !it.adult && !it.anime }
     }
@@ -175,17 +186,21 @@ object CeliumSources {
     }
 
     fun accepts(section: CeliumSection, type: TvType?, apiName: String = ""): Boolean = when (section) {
-        CeliumSection.AdultGames -> type == TvType.NSFW || type == null
-        CeliumSection.Adult -> type == TvType.NSFW || type == null
-        CeliumSection.Movies -> type == TvType.Movie || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.AnimeMovie))
-        CeliumSection.Series -> type == TvType.TvSeries || type == TvType.AsianDrama || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.OVA))
-        CeliumSection.Anime -> isAnime(apiName) || type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA || type == null
+        CeliumSection.AdultGames -> isAdult(type, apiName) || type == TvType.NSFW || type == null
+        CeliumSection.Adult -> isAdult(type, apiName) || type == TvType.NSFW || type == null
+        CeliumSection.Movies -> !isAdult(type, apiName) && (type == TvType.Movie || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.AnimeMovie)))
+        CeliumSection.Series -> !isAdult(type, apiName) && (type == TvType.TvSeries || type == TvType.AsianDrama || type == null || (isOTT(apiName) && (type == TvType.Anime || type == TvType.OVA)))
+        CeliumSection.Anime -> !isAdult(type, apiName) && (isAnime(apiName) || type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA || type == null)
     }
 
     fun isAdult(type: TvType?, apiName: String): Boolean {
         if (type == TvType.NSFW) return true
-        if (all.any { it.adult && normalize(apiName) in (it.aliases + it.plugin + it.label).map(::normalize) }) return true
-        return APIHolder.apis.withLock { APIHolder.apis.any { it.name == apiName && TvType.NSFW in it.supportedTypes } }
+        if (apiName.isBlank()) return false
+        val norm = normalize(apiName)
+        if (all.any { it.adult && (norm == normalize(it.id) || norm == normalize(it.label) || norm == normalize(it.plugin) || it.aliases.any { a -> norm == normalize(a) }) }) return true
+        val knownAdultKeywords = listOf("porn", "xxx", "xhamster", "xvideo", "xnxx", "hqporner", "youperv", "porngame", "rule34", "hentai")
+        if (knownAdultKeywords.any { norm.contains(it) }) return true
+        return APIHolder.apis.withLock { APIHolder.apis.any { (it.name == apiName || normalize(it.name) == norm) && TvType.NSFW in it.supportedTypes } }
     }
 
     fun catalogIdentity(card: CeliumTile): String = if (card.year != null && card.type != null) {
@@ -195,6 +210,7 @@ object CeliumSources {
     /** Home accepts every Movies and TV Shows item: anything that is not Adult, and only excludes Anime from dedicated anime sources. */
     fun acceptsHome(type: TvType?, apiName: String = ""): Boolean {
         if (type == TvType.NSFW) return false
+        if (isAdult(type, apiName)) return false
         if (type == TvType.Anime || type == TvType.AnimeMovie || type == TvType.OVA) {
             return isOTT(apiName)
         }
