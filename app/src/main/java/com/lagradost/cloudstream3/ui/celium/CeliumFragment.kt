@@ -37,6 +37,7 @@ open class CeliumFragment : BaseComposeFragment() {
             onMore = model::more, onMoreSearch = model::moreSearch,
             onSections = model::moreSections, onRetry = model::retry,
             onRetryPaging = model::retryPaging, onRetrySlot = model::retrySlot,
+            onSearchFilter = model::filterSearch, onSearchIn = model::searchIn,
             getScroll = model::getScroll,
             setScroll = model::setScroll,
             onOpen = { card, play ->

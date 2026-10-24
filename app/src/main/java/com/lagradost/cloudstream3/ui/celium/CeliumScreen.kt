@@ -60,6 +60,8 @@ fun CeliumScreen(
     onRetry: () -> Unit = onRefresh,
     onRetryPaging: (String) -> Unit = {},
     onRetrySlot: (CategorySlot) -> Unit = {},
+    onSearchFilter: (String?) -> Unit = {},
+    onSearchIn: (CeliumSection) -> Unit = {},
     randomEnabled: Boolean = false,
     getScroll: (String) -> Pair<Int, Int> = { Pair(0, 0) },
     setScroll: (String, Int, Int) -> Unit = { _, _, _ -> },
@@ -97,7 +99,10 @@ fun CeliumScreen(
                         }
                     }
                     if (searchMode) {
-                        if (state.source.id == "celium") Text("Celium Feed searches its first ready source. Choose a source for other results.",
+                        if (state.source.id == "celium" && state.searchAllSources) Text(
+                            "Searches all ${if (state.section == CeliumSection.Movies || state.section == CeliumSection.Series) "Movies and TV Shows" else state.section.label} sources. Pick a source above to search only it.",
+                            Modifier.padding(horizontal = edge, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        else if (state.source.id == "celium") Text("Celium Feed searches its first ready source. Choose a source for other results.",
                             Modifier.padding(horizontal = edge, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val focus = LocalFocusManager.current
                         OutlinedTextField(state.query, onQuery, Modifier.fillMaxWidth().padding(horizontal = edge, vertical = 8.dp)
@@ -129,7 +134,8 @@ fun CeliumScreen(
                 } }) {
                     key(state.home, state.section, state.source.id, searchMode, scrollTrigger) {
                         if (searchMode) SearchContent(state, edge, width, onQuery, onMoreSearch, onOpen, Modifier.fillMaxSize(), onRetry,
-                            onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn)
+                            onRetryPaging = { onRetryPaging(CeliumState.SEARCH) }, header = quickReturn,
+                            onFilter = onSearchFilter, onSearchIn = onSearchIn)
                         else {
                         val feedKey = "${state.home}_${state.section.name}_${state.source.id}_$scrollTrigger"
                         val initialScrollPos = remember(feedKey) { getScroll(feedKey) }
@@ -301,40 +307,73 @@ fun CeliumScreen(
 @Composable
 private fun SearchContent(state: CeliumState, edge: Dp, width: Dp, onQuery: (String) -> Unit,
     onMore: () -> Unit, onOpen: (SearchResponse, Boolean) -> Unit, modifier: Modifier, onRetry: () -> Unit,
-    onRetryPaging: () -> Unit, header: QuickReturnState) {
+    onRetryPaging: () -> Unit, header: QuickReturnState,
+    onFilter: (String?) -> Unit = {}, onSearchIn: (CeliumSection) -> Unit = {}) {
     val bindFailure = (state.binding as? BindStatus.Failed)?.message
+    val sources = state.searchSources
+    val answered = sources.count { it.state != SourceState.Pending }
+    val worked = sources.count { it.state == SourceState.Done }
+    val failedSources = sources.filter { it.state == SourceState.Failed || it.state == SourceState.TimedOut || it.state == SourceState.Skipped }
+    // A chip narrows the list to titles one source offers; counts come from the results as grouped.
+    val filter = state.searchFilter
+    // Derived once per change, not on every recomposition while results stream in.
+    val shown = remember(state.results, filter) { if (filter == null) state.results
+        else state.results.filter { tile -> tile.sources.any { it.sourceId == filter } } }
+    val perSource = remember(state.results, sources) { sources.associate { s -> s.id to state.results.count { tile -> tile.sources.any { it.sourceId == s.id } } } }
     Column(modifier) {
         Text(when {
             state.query.trim().length < 2 -> bindFailure ?: "Search the selected category and source."
             bindFailure != null -> bindFailure
             state.binding == BindStatus.Waiting -> "Preparing ${state.source.label}…"
+            state.searching && sources.size > 1 -> "Searching $answered of ${sources.size} sources · ${state.results.size} results"
             state.searching -> "Searching ${state.source.label}…"
             state.searchError != null -> state.searchError
+            state.searched && sources.size > 1 -> "${state.results.size} results from $worked of ${sources.size} sources"
             state.searched -> "${state.results.size} results · ${state.source.label}"
+            state.query.trim().length < 3 -> "Keep typing, or press Search."
             else -> "Checking ${state.source.label}…"
         }, Modifier.padding(horizontal = edge, vertical = 12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         // Binding failures retry the provider (16.9); search failures repeat the query and keep shown results (16.8).
         if (bindFailure != null) TextButton(onClick = onRetry) { Text("Retry") }
         else if (state.searchError != null) TextButton(onClick = { onQuery(state.query) }) { Text("Retry search") }
-        if (state.searched && !state.searching && state.results.isEmpty() && state.searchError == null) {
+        if (!state.searching && failedSources.isNotEmpty() && state.searchError == null) {
+            Row(Modifier.padding(horizontal = edge), verticalAlignment = Alignment.CenterVertically) {
+                Text("${failedSources.size} source${if (failedSources.size == 1) "" else "s"} did not answer: ${failedSources.joinToString { it.label }}",
+                    Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                TextButton(onClick = { onQuery(state.query) }) { Text("Retry") }
+            }
+        }
+        if (sources.size > 1 && state.results.isNotEmpty()) {
+            LazyRow(contentPadding = PaddingValues(horizontal = edge), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item(key = "all") { FilterChip(filter == null, { onFilter(null) }, { Text("All ${state.results.size}") }) }
+                items(sources.filter { (perSource[it.id] ?: 0) > 0 }, key = { it.id }) { s ->
+                    FilterChip(filter == s.id, { onFilter(if (filter == s.id) null else s.id) }, { Text("${s.label} ${perSource[s.id]}") })
+                }
+            }
+        }
+        if (state.searched && !state.searching && shown.isEmpty() && state.searchError == null) {
             CeliumEmpty("No matches here", "Try a different title or choose another source.")
+            val other = when (state.section) { CeliumSection.Movies -> CeliumSection.Series; CeliumSection.Series -> CeliumSection.Movies; else -> null }
+            if (other != null && state.source.id == "celium" && state.query.isNotBlank()) {
+                TextButton(onClick = { onSearchIn(other) }, modifier = Modifier.padding(horizontal = edge)) { Text("Search ${other.label} instead") }
+            }
         }
         val grid = rememberLazyGridState()
         ResetHeaderAtTop(header) { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
         val paging = state.page(CeliumState.SEARCH)
         InfiniteScrollEffect(
             lastVisibleIndex = { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index },
-            loadedCount = state.results.size,
+            loadedCount = shown.size,
             threshold = CeliumPaging.ITEM_THRESHOLD,
             status = if (state.searchHasNext && !state.searching) paging.status else PageStatus.End,
             onLoadMore = onMore,
         )
         LazyVerticalGrid(GridCells.Adaptive(width), Modifier.weight(1f), state = grid, contentPadding = PaddingValues(edge),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            items(state.results, key = { "${it.apiName}:${it.url}" }, contentType = { "poster" }) { card ->
+            items(shown, key = { "${it.apiName}:${it.url}" }, contentType = { "poster" }) { card ->
                 CeliumPoster(card, Modifier.fillMaxWidth()) { onOpen(card, false) }
             }
-            if (state.results.isNotEmpty()) item(key = "footer", span = { GridItemSpan(maxLineSpan) }, contentType = "footer") {
+            if (shown.isNotEmpty()) item(key = "footer", span = { GridItemSpan(maxLineSpan) }, contentType = "footer") {
                 PagingFooter(paging, onRetry = onRetryPaging)
             }
         }
@@ -443,7 +482,10 @@ internal fun CeliumPoster(card: SearchResponse, modifier: Modifier = Modifier, o
         }
         Text(card.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium, modifier = Modifier.heightIn(min = 40.dp))
-        (card as? CeliumTile)?.year?.let { Text(it.toString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        val tile = card as? CeliumTile
+        val count = tile?.sources?.map { it.apiName }?.distinct()?.size ?: 0
+        val caption = listOfNotNull(tile?.year?.toString(), if (count > 1) "$count sources" else null).joinToString(" · ")
+        if (caption.isNotEmpty()) Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

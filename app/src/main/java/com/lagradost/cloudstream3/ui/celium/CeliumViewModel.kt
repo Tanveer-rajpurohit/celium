@@ -21,6 +21,7 @@ import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.ui.APIRepository
 import com.lagradost.cloudstream3.ui.home.HomeViewModel
+import com.lagradost.cloudstream3.ui.search.SearchQuery
 import com.lagradost.cloudstream3.ui.search.SearchRanking
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
+/** One source that offers a tile's title, kept so a grouped search result can list where it is available. */
+@Serializable
+data class CeliumTileSource(val sourceId: String, val apiName: String, val url: String)
+
 @Serializable
 data class CeliumTile(
     override val name: String,
@@ -52,6 +57,8 @@ data class CeliumTile(
     override var posterUrl: String? = null,
     override var posterHeaders: Map<String, String>? = null,
     val year: Int? = null,
+    /** Other sources with the same title (search results only). Empty by default, so feeds cached by older builds still load. */
+    val sources: List<CeliumTileSource> = emptyList(),
 ) : SearchResponse {
     @Transient override var id: Int? = null
     @Transient override var quality: SearchQuality? = null
@@ -87,6 +94,9 @@ data class CeliumSnapshot(
 
 data class CeliumSourceStatus(val source: CeliumSource, val installed: Boolean, val hasFeed: Boolean, val reason: String? = null)
 
+/** Progress of one source in the running or last category search. */
+data class CeliumSearchSourceUi(val id: String, val label: String, val state: SourceState, val count: Int)
+
 data class CeliumState(
     /** Home_Feed is the landing screen: the Movies/TV Celium Feed with Movies and TV Shows combined (3.1, 15.5). */
     val home: Boolean = true,
@@ -105,6 +115,12 @@ data class CeliumState(
     val searchPage: Int = 1,
     val searchHasNext: Boolean = false,
     val searchError: String? = null,
+    /** Per-source progress of the category search, in priority order; one entry when a single source is searched. */
+    val searchSources: List<CeliumSearchSourceUi> = emptyList(),
+    /** Source id the results are narrowed to by a chip; null shows every result. */
+    val searchFilter: String? = null,
+    /** False when the Settings switch limits search to the first ready source. */
+    val searchAllSources: Boolean = false,
     /** Paging per list: "search", "sections", and each shelf.key. Missing entry = Idle (Requirement 6). */
     val pages: Map<String, ListPaging> = emptyMap(),
     val adultEnabled: Boolean = false,
@@ -137,6 +153,16 @@ private const val GATE_SEARCH = "search"
 private const val FEED_TIMEOUT_MS = 15_000L
 /** Cache key of the Home_Feed (the Movies/TV Celium Feed, unsplit). */
 private const val HOME_CACHE_KEY = "celium_feed_v2_Home_celium"
+/** Settings switch: search every ready source of the category (default) or only the first ready one. */
+internal const val SEARCH_ALL_KEY = "celium_search_all"
+/** Typing waits this long before a search starts; the keyboard's Search key and Retry start at once. */
+private const val SEARCH_DEBOUNCE_MS = 250L
+/** Shortest query that starts a search by typing; two letters need the Search key. */
+private const val SEARCH_MIN_TYPED = 3
+/** Results on screen update at most this often while sources are still answering. */
+private const val SEARCH_PUBLISH_MS = 400L
+/** Most search results kept in memory. */
+private const val SEARCH_MAX_RESULTS = 300
 
 @OptIn(FlowPreview::class)
 class CeliumViewModel : ViewModel() {
@@ -163,7 +189,13 @@ class CeliumViewModel : ViewModel() {
     private var selectedAt = SystemClock.elapsedRealtime()
     @Volatile private var lastPassAt = 0L
     private var adultDiscarded = false
-    private val queryCache = linkedMapOf<Triple<CeliumSection, String, String>, Pair<Long, List<CeliumTile>>>()
+    /**
+     * Category search (Plan 1): asks every ready source of the category at once, with a per-source cache,
+     * timeout and health tracking. [searchApis] maps a target id to its provider for the running search.
+     */
+    private val searchEngine = CeliumSearchEngine(::searchFetch)
+    private var searchSession: SearchSession? = null
+    @Volatile private var searchApis: Map<String, MainAPI> = emptyMap()
 
     /** Plugin_Loaded_Event and policy changes, coalesced so a burst of plugin loads binds once. */
     private val pluginSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -262,7 +294,8 @@ class CeliumViewModel : ViewModel() {
     private fun discardAdult() {
         if (adultDiscarded) return
         adultDiscarded = true
-        queryCache.keys.removeAll { it.first == CeliumSection.Adult || it.first == CeliumSection.AdultGames }
+        // Cached search answers are keyed by source, not section, so clear them all.
+        searchEngine.cache.clear()
         val adultSources = listOf(CeliumSources.curated(CeliumSection.Adult)) + CeliumSources.all.filter { it.adult }
         viewModelScope.launch(Dispatchers.IO) {
             try { adultSources.forEach {
@@ -747,14 +780,37 @@ class CeliumViewModel : ViewModel() {
         }
     }
 
-    /** Home and the Movies Celium Feed filter differently, so their query results are cached apart. */
-    private fun queryKey(state: CeliumState, query: String) =
-        Triple(state.section, if (state.home) "home:${state.source.id}" else state.source.id, query)
+    /** One source's search call; the engine wraps it with the timeout, cache and health tracking. */
+    private suspend fun searchFetch(target: SearchTarget, query: String, page: Int): FetchResult {
+        val api = searchApis[target.id] ?: return FetchResult.Failed
+        val result = permitsFor(api).withPermit { withContext(Dispatchers.IO) { repo(api).search(query, page) } }
+        return if (result is Resource.Success) FetchResult.Ok(result.value.items, result.value.hasNext) else FetchResult.Failed
+    }
 
-    /** Search uses only the selected provider; Celium Feed uses its first ready pool source (16.11). */
-    private fun searchApi(current: CeliumState): MainAPI? =
-        if (current.source.id == "celium") curatedProviders(current.section).firstOrNull()?.second
-        else boundApi ?: CeliumSources.resolve(current.source, providers())
+    /**
+     * Sources a search asks. A chosen provider searches only itself. Celium Feed searches every ready, enabled
+     * source of the category (Home and Movies/TV Shows: the Movies/TV Shows catalogue), best-known first, unless
+     * the Settings switch limits it to the first ready one.
+     */
+    private fun searchTargets(current: CeliumState): Pair<List<SearchTarget>, Map<String, MainAPI>> {
+        val available = providers()
+        val chosen: List<Pair<CeliumSource, MainAPI>> = when {
+            current.source.id != "celium" ->
+                CeliumSources.resolve(current.source, available)?.let { listOf(current.source to it) }.orEmpty()
+            getKey<Boolean>(SEARCH_ALL_KEY) != true -> curatedProviders(current.section).take(1)
+            else -> {
+                val candidates = CeliumSources.choices(current.section).filter { it.id != "celium" }
+                val ordered = if (current.section == CeliumSection.Movies || current.section == CeliumSection.Series)
+                    CeliumHomePool.orderPool(candidates) else candidates
+                ordered.mapNotNull { s -> CeliumSources.resolve(s, available)?.let { s to it } }
+            }
+        }
+        // Two catalogue entries can resolve to one provider; ask it once.
+        val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<MainAPI, Boolean>())
+        val unique = chosen.filter { seen.add(it.second) }
+        val targets = unique.mapIndexed { index, (source, _) -> SearchTarget(source.id, source.label, index) }
+        return targets to unique.associate { it.first.id to it.second }
+    }
 
     fun query(value: String) {
         searchJob?.cancel()
@@ -763,13 +819,19 @@ class CeliumViewModel : ViewModel() {
         val current = _state.value
         val sourceId = current.source.id
         val query = SearchRanking.cleanQuery(value).take(200)
-        _state.value = current.copy(query = value.take(200), results = emptyList(), searching = query.length >= 2,
+        // The Search key and Retry send the same text again: they start at once and clear skipped sources.
+        val submit = value.isNotBlank() && value == current.query
+        val start = query.length >= 2 && (query.length >= SEARCH_MIN_TYPED || submit)
+        val wait = if (submit) 0L else SEARCH_DEBOUNCE_MS
+        searchSession = null
+        _state.value = current.copy(query = value.take(200), results = emptyList(), searching = start,
             searched = false, searchPage = 1, searchHasNext = false, searchError = null,
-            pages = current.pages - CeliumState.SEARCH)
-        if (query.length < 2) return
+            pages = current.pages - CeliumState.SEARCH, searchSources = emptyList(), searchFilter = null,
+            searchAllSources = getKey<Boolean>(SEARCH_ALL_KEY) == true)
+        if (!start) return
         if (current.section == CeliumSection.AdultGames) {
             searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
-                delay(350)
+                delay(wait)
                 if (!liveSearch(token, sourceId)) return@gated
                 val local = withContext(Dispatchers.Default) {
                     SearchRanking.rank(query, current.shelves.flatMap { it.cards })
@@ -796,90 +858,144 @@ class CeliumViewModel : ViewModel() {
             }
             return
         }
-        val api = searchApi(current)
+        val parsed = SearchQuery.parse(query)
         searchJob = gated(GATE_SEARCH, { searchGeneration = it }) { token ->
-            delay(350)
+            delay(wait)
             if (!liveSearch(token, sourceId)) return@gated
+            if (submit) searchEngine.health.reset()
+            val (targets, apis) = searchTargets(current)
+            searchApis = apis
+            val session = SearchSession(targets, parsed)
+            // Titles already loaded on screen that match are shown at once and never lost.
             val local = withContext(Dispatchers.Default) {
-                SearchRanking.rank(query, current.shelves.flatMap { it.cards })
-                    .filter { SearchRanking.score(query, it.name) > 0 }.map(CeliumTile::from)
+                current.shelves.flatMap { it.cards }.filter {
+                    SearchRanking.score(parsed.title.ifBlank { query }, it.name) > 0 || SearchRanking.score(query, it.name) > 0
+                }
             }
+            session.seed(local)
+            searchSession = session
             if (!liveSearch(token, sourceId)) return@gated
-            _state.value = _state.value.copy(results = local)
-            if (api == null) {
+            if (targets.isEmpty()) {
+                publishSearch(token, sourceId, session, current, finished = false)
                 // While the provider is preparing keep the loading state; a rebind re-runs this query (16.3, 16.4).
                 val failed = _state.value.binding as? BindStatus.Failed
                 _state.value = if (failed == null) _state.value.copy(searching = true)
                     else _state.value.copy(searching = false, searched = true, searchError = failed.message)
                 return@gated
             }
-            val cached = queryCache[queryKey(current, query)]
-            if (cached != null && System.currentTimeMillis() - cached.first < 600_000L) {
-                // Only single-page results are cached, so the list is complete.
-                _state.value = _state.value.copy(results = cached.second, searching = false, searched = true,
-                    pages = _state.value.pages + (CeliumState.SEARCH to ListPaging(PageStatus.End)))
-                return@gated
-            }
-            runSearch(api, query, 1, token, local)
+            publishSearch(token, sourceId, session, current, finished = false)
+            collectSearch(token, sourceId, session, current, targets)
         }
     }
 
+    /** Runs [targets] through the engine, applying each source as it answers; the screen updates at most every 300 ms. */
+    private suspend fun collectSearch(token: Long, sourceId: String, session: SearchSession, current: CeliumState, targets: List<SearchTarget>) {
+        var lastPublish = 0L
+        try {
+            searchEngine.run(targets, session.parsed) { session.pageToLoad(it) }.collect { outcome ->
+                if (!liveSearch(token, sourceId)) return@collect
+                session.apply(outcome)
+                val now = SystemClock.elapsedRealtime()
+                if (session.pending && now - lastPublish >= SEARCH_PUBLISH_MS) {
+                    lastPublish = now
+                    publishSearch(token, sourceId, session, current, finished = false)
+                }
+            }
+            if (liveSearch(token, sourceId)) publishSearch(token, sourceId, session, current, finished = true)
+        } catch (e: CancellationException) { throw e
+        } catch (e: Throwable) {
+            logError(e)
+            if (liveSearch(token, sourceId)) publishSearch(token, sourceId, session, current, finished = true)
+        } finally {
+            if (liveSearch(token, sourceId)) _state.value = _state.value.copy(searching = false)
+        }
+    }
+
+    /** Groups, ranks and shows everything the session has so far. Grouping and ranking run off the main thread (5.3). */
+    private suspend fun publishSearch(token: Long, sourceId: String, session: SearchSession, current: CeliumState, finished: Boolean) {
+        val classify = splitsFeed(current.home, current.section)
+        val fits = CeliumSearchMerge.typeFits(current.section, current.home)
+        val fresh = withContext(Dispatchers.Default) { buildSearchResults(session, current, classify, fits) }
+        if (!liveSearch(token, sourceId)) return
+        // While sources are still answering, titles already on screen keep their place and new ones join the end,
+        // so the list does not reshuffle under the finger. The final ranking applies once everything has answered.
+        val tiles = if (finished) fresh else keepOrder(_state.value.results, fresh)
+        val statuses = session.statuses
+        val ui = statuses.map { CeliumSearchSourceUi(it.target.id, it.target.label, it.state, it.count) }
+        val anyAnswered = statuses.any { it.state == SourceState.Done }
+        val paging = if (!finished) _state.value.page(CeliumState.SEARCH)
+            else ListPaging(if (session.nextTargets().isNotEmpty()) PageStatus.Idle else PageStatus.End)
+        _state.value = _state.value.copy(
+            results = tiles,
+            searchSources = ui,
+            searched = finished || _state.value.searched,
+            searchHasNext = finished && session.nextTargets().isNotEmpty(),
+            searchPage = statuses.maxOfOrNull { it.page }?.coerceAtLeast(1) ?: 1,
+            searchError = if (finished && tiles.isEmpty() && !anyAnswered && statuses.isNotEmpty())
+                "Search failed on every source. Retry or change source." else null,
+            pages = if (finished) _state.value.pages + (CeliumState.SEARCH to paging) else _state.value.pages,
+        )
+    }
+
+    private fun searchKey(tile: CeliumTile) = tile.apiName + "\u0000" + tile.url
+
+    private fun keepOrder(previous: List<CeliumTile>, fresh: List<CeliumTile>): List<CeliumTile> {
+        if (previous.isEmpty()) return fresh
+        val byKey = fresh.associateBy(::searchKey)
+        val kept = previous.mapNotNull { byKey[searchKey(it)] }
+        val keptKeys = kept.mapTo(HashSet(), ::searchKey)
+        return kept + fresh.filter { searchKey(it) !in keptKeys }
+    }
+
+    private fun buildSearchResults(session: SearchSession, current: CeliumState, classify: Boolean, fits: (SearchResponse) -> Boolean): List<CeliumTile> {
+        val hits = session.hits
+        // The view keeps only the hits its category accepts (4.1-4.4). Only hits not yet decided are classified.
+        val undecided = hits.filter { session.allowed[it.item] == null }
+        if (undecided.isNotEmpty()) {
+            val accepted = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<SearchResponse, Boolean>())
+            accepted.addAll(sectionItems(current.section, current.home, classify, null, undecided.map { it.item }))
+            undecided.forEach { session.allowed[it.item] = it.item in accepted }
+        }
+        val kept = hits.filter { session.allowed[it.item] == true }
+        return CeliumSearchMerge.results(session.parsed, kept, fits)
+            .distinctBy { "${it.best.item.apiName}:${it.best.item.url}" }
+            .take(SEARCH_MAX_RESULTS).map { merged ->
+            val base = CeliumTile.from(merged.best.item)
+            base.copy(
+                year = merged.year ?: base.year,
+                sources = merged.hits.filter { it.sourceId.isNotEmpty() }
+                    .map { CeliumTileSource(it.sourceId, it.item.apiName, it.item.url) }.distinctBy { it.sourceId to it.url },
+            )
+        }
+    }
+
+    /** Next page from every source that has one; sources that already answered are not asked again. */
     fun moreSearch() {
         val current = _state.value
         val status = current.page(CeliumState.SEARCH).status
         if (!current.searchHasNext || current.searching || status == PageStatus.Loading || status == PageStatus.End) return
         if (searchJob?.isActive == true) return
-        // Search stays on the bound provider only (15.3).
-        val api = searchApi(current) ?: return
+        val session = searchSession ?: return
+        val next = session.nextTargets()
+        if (next.isEmpty()) return
         val token = searchGeneration
+        val sourceId = current.source.id
+        session.beginNextPage(next)
         setPage(CeliumState.SEARCH, ListPaging(PageStatus.Loading))
-        searchJob = viewModelScope.launch { runSearch(api, SearchRanking.cleanQuery(current.query), current.searchPage + 1, token, current.results) }
+        _state.value = _state.value.copy(searching = true)
+        searchJob = viewModelScope.launch { collectSearch(token, sourceId, session, current, next) }
     }
 
-    private suspend fun runSearch(api: MainAPI, query: String, page: Int, token: Long, existing: List<CeliumTile>) {
-        val current = _state.value
-        val sourceId = current.source.id
-        val repository = repo(api)
-        val failed = "Search failed on ${current.source.label}. Retry or change source."
-        val moreFailed = ListPaging(PageStatus.Error, "More results could not load.")
-        try {
-            val result = withTimeoutOrNull(CeliumPaging.TIMEOUT_MS) {
-                permitsFor(api).withPermit { withContext(Dispatchers.IO) { repository.search(query, page) } }
-            }
-            if (!liveSearch(token, sourceId)) return
-            if (result is Resource.Success) {
-                // Movies/TV Shows search keeps only results the classifier assigns to this Section; Anime/Adult
-                // keep their type filter and only ever query their own Section's sources (4.1–4.3).
-                // Home search keeps both Movies and TV Shows results (4.4).
-                val classify = splitsFeed(current.home, current.section)
-                // Classification, dedup, and ranking run off the main thread (5.3).
-                val (items, ranked) = withContext(Dispatchers.Default) {
-                    val items = sectionItems(current.section, current.home, classify, null, result.value.items)
-                    // Page 1 ranks local + remote; later pages rank only their own items (6.10, 6.11).
-                    items to SearchRanking.rank(query, if (page == 1) existing + items else items).map(CeliumTile::from)
-                }
-                if (!liveSearch(token, sourceId)) return
-                val (cards, added) = if (page == 1) ranked to items.size
-                    else CeliumPaging.append(_state.value.results, ranked) { it.url }.let { it.items to it.added }
-                val after = CeliumPaging.statusAfter(added, result.value.hasNext)
-                _state.value = _state.value.copy(results = cards, searched = true, searchPage = page,
-                    searchHasNext = after == PageStatus.Idle,
-                    pages = _state.value.pages + (CeliumState.SEARCH to ListPaging(after)))
-                // Paginated queries are not cached: their continuation cursor must remain intact.
-                if (page == 1 && !result.value.hasNext) {
-                    queryCache[queryKey(current, query)] = System.currentTimeMillis() to cards
-                    while (queryCache.size > 24) queryCache.remove(queryCache.keys.first())
-                }
-            } else _state.value = if (page == 1) _state.value.copy(searched = true, searchError = failed)
-                else _state.value.copy(pages = _state.value.pages + (CeliumState.SEARCH to moreFailed))
-        } catch (e: CancellationException) { throw e
-        } catch (e: Exception) {
-            logError(e)
-            if (liveSearch(token, sourceId)) _state.value = if (page == 1) _state.value.copy(searchError = failed, searched = true)
-                else _state.value.copy(pages = _state.value.pages + (CeliumState.SEARCH to moreFailed))
-        } finally {
-            if (liveSearch(token, sourceId)) _state.value = _state.value.copy(searching = false)
-        }
+    /** Narrows the shown results to one source (a chip), or null for all. Counts and order stay as ranked. */
+    fun filterSearch(sourceId: String?) {
+        _state.value = _state.value.copy(searchFilter = sourceId)
+    }
+
+    /** Runs the typed query in another category (the empty-state shortcut). */
+    fun searchIn(section: CeliumSection) {
+        val text = _state.value.query
+        selectSection(section)
+        if (text.isNotBlank()) query(text)
     }
 
 

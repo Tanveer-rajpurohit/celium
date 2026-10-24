@@ -25,6 +25,8 @@ import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import com.lagradost.cloudstream3.AutoDownloadMode
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.InternalAPI
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.R
@@ -154,6 +156,14 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                                         Text("Show a Random button on the feed that opens a random loaded title.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(randomEnabled, { CeliumPrefs.setRandomButton(context, it) })
+                                }
+                                var searchAll by remember { mutableStateOf(getKey<Boolean>(SEARCH_ALL_KEY) == true) }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Search all sources in a category", fontWeight = FontWeight.Medium)
+                                        Text("On searches every enabled source of the category at once (can be slow). Off searches only one ready source.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(searchAll, { searchAll = it; setKey(SEARCH_ALL_KEY, it) })
                                 }
                                 OutlinedButton(onClick = { page = "Content sources" }) { Text("Manage content sources") }
                             }
