@@ -1,5 +1,5 @@
 # Celium 7
-A personal Android media app for browsing, search, details, saved titles, viewing history, downloads and settings. Version 7.0.0-celium (71).
+A personal Android media app for browsing, search, details, saved titles, viewing history, downloads and settings. Version 7.0.5-celium (76).
 
 This is an installable test build, not a claim of verified playback on every source or production readiness. Read [verification](VERIFICATION.md), [changes](docs/CELIUM_CHANGES.md) and [source research](docs/CELIUM_RESEARCH.md).
 
@@ -24,6 +24,8 @@ Celium opens on Home, a combined Movies and TV Shows feed with a featured carous
 Read [Windows starter instructions](windows/README.md). An existing Android SDK, emulator and AVD are required. Android .cs3 extensions are not native Windows plugins.
 
 ## Build
+For in-app updates and publishing signed releases, read [Celium updates](docs/CELIUM_UPDATES.md).
+
 Read [CELIUM_BUILD.md](CELIUM_BUILD.md). The Android application ID for this debug build is app.celium.android.debug. Source, fonts and license notices are included; SDKs, caches and build outputs are not part of the source archive.
 
 ## Compatibility

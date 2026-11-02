@@ -1,0 +1,89 @@
+name: Celium release
+
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: celium-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # Keep the ID of the test APKs already distributed to Celium users.
+      CELIUM_APPLICATION_ID: ${{ vars.CELIUM_APPLICATION_ID || 'app.celium.android.debug' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CELIUM_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.CELIUM_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CELIUM_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.CELIUM_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!value}" ]; then
+              echo "::error::Missing signing secret: $value. See docs/CELIUM_UPDATES.md."
+              exit 1
+            fi
+          done
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/celium.keystore"
+      - name: Test and build signed APK
+        env:
+          CELIUM_KEYSTORE_PATH: ${{ runner.temp }}/celium.keystore
+          CELIUM_KEYSTORE_PASSWORD: ${{ secrets.CELIUM_KEYSTORE_PASSWORD }}
+          CELIUM_KEY_ALIAS: ${{ secrets.CELIUM_KEY_ALIAS }}
+          CELIUM_KEY_PASSWORD: ${{ secrets.CELIUM_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          python3 -m unittest discover -s scripts/tests -v
+          ./gradlew :shared:jvmTest :app:testStableReleaseUnitTest :app:assembleStableRelease -PceliumApplicationId="$CELIUM_APPLICATION_ID" --console=plain
+      - name: Verify and package release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$BUILD_TOOLS/apksigner" verify --verbose app/build/outputs/apk/stable/release/*.apk
+          python3 scripts/prepare_release.py \
+            --metadata app/build/outputs/apk/stable/release/output-metadata.json \
+            --output build/celium-release --tag "$RELEASE_TAG" \
+            --application-id "$CELIUM_APPLICATION_ID"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/celium-release-state.json"; then
+            if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["isDraft"] else 1)' "$RUNNER_TEMP/celium-release-state.json"; then
+              echo '::error::This release is already public. Publish a new version instead of replacing its APK.'
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" build/celium-release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" build/celium-release/* --verify-tag --draft --generate-notes --title "Celium $RELEASE_TAG"
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/celium.keystore"

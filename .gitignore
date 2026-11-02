@@ -44,6 +44,10 @@ render.experimental.xml
 *.jks
 *.keystore
 
+# Python release tooling
+__pycache__/
+*.pyc
+
 # Google Services (e.g. APIs or Firebase)
 google-services.json
 
