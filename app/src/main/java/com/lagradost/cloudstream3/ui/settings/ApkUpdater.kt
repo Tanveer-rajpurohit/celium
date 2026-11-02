@@ -13,7 +13,6 @@ import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.ErrorLoadingException
 import com.lagradost.cloudstream3.MainActivity.Companion.deleteFileOnExit
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.mvvm.safe
 import com.lagradost.cloudstream3.receivers.PackageInstallerStatusReceiver
 import com.lagradost.cloudstream4.AppSettings
 import com.lagradost.cloudstream4.viewmodels.AppUpdater
@@ -29,7 +28,7 @@ import java.security.DigestException
 import java.security.MessageDigest
 
 object ApkUpdater : AppUpdater {
-    private const val APP_UPDATE_NAME = "CloudStream"
+    private const val APP_UPDATE_NAME = "Celium"
     private const val APP_UPDATE_SUFFIX = "apk"
 
     @Throws
@@ -39,6 +38,7 @@ object ApkUpdater : AppUpdater {
         digest: DigestPair?,
         downloadProgress: (Long, Long?) -> Unit
     ) {
+        requireNotNull(digest) { "The update is missing its checksum" }
         val activity = CommonActivity.activity ?: throw ErrorLoadingException("No activity found")
         clearOldFiles(activity)
 
@@ -93,7 +93,7 @@ object ApkUpdater : AppUpdater {
                 PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                installParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                installParams.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
             }
             if (length != null) {
                 installParams.setSize(length)
@@ -144,11 +144,7 @@ object ApkUpdater : AppUpdater {
      *
      * ------------------------------------------------------------------------------------------
      *
-     * In case of crashes from the digest, we ignore it as we do not want to "block" someone from
-     * updating if they got a broken OS without the desired algorithm or implementation.
-     *
-     * This is because a malicious CDN should not be able to "crash" the algorithm, but a broken
-     * OS will. And recovering from a broken OS by ignoring it is better than refusing it.
+     * A supplied checksum must be verified successfully before installation can proceed.
      * */
     @Throws
     suspend fun transfer(
@@ -158,11 +154,7 @@ object ApkUpdater : AppUpdater {
         downloadProgress: (Long, Long?) -> Unit,
         digest: DigestPair?,
     ) = withContext(Dispatchers.IO) {
-        val md = digest?.algorithm?.let { digestAlgorithm ->
-            safe {
-                MessageDigest.getInstance(digestAlgorithm)
-            }
-        }
+        val md = digest?.algorithm?.let(MessageDigest::getInstance)
 
         val context = currentCoroutineContext()
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -173,9 +165,7 @@ object ApkUpdater : AppUpdater {
         ) {
             writeStream.write(buffer, 0, read)
 
-            safe {
-                md?.update(buffer, 0, read)
-            }
+            md?.update(buffer, 0, read)
 
             transferred += read.toLong()
             downloadProgress(transferred, length)
@@ -183,9 +173,9 @@ object ApkUpdater : AppUpdater {
         }
         writeStream.flush()
 
-        val check = safe { md?.digest() }
-        if (check != null && !check.contentEquals(digest?.digest)) {
-            throw DigestException("Mismatched digest on transfer ${digest?.algorithm} : ${check.toHexString()} / ${digest?.digest?.toHexString()}")
+        val check = md?.digest()
+        if (check != null && !check.contentEquals(digest.digest)) {
+            throw DigestException("The downloaded update did not match its checksum")
         }
     }
 
@@ -197,7 +187,7 @@ object ApkUpdater : AppUpdater {
         digest: DigestPair?,
         downloadProgress: (Long, Long?) -> Unit
     ) = withContext(Dispatchers.IO) {
-        val downloadedFile = File.createTempFile(APP_UPDATE_NAME, ".$APP_UPDATE_SUFFIX")
+        val downloadedFile = File.createTempFile(APP_UPDATE_NAME, ".$APP_UPDATE_SUFFIX", activity.cacheDir)
 
         // We do not need to buffer this because transfer has large writes
         downloadedFile.outputStream().use { writeStream ->
@@ -215,7 +205,7 @@ object ApkUpdater : AppUpdater {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
-            data = contentUri
+            setDataAndType(contentUri, GithubReleases.APK_CONTENT_TYPE)
         }
         context.startActivity(installIntent)
     }

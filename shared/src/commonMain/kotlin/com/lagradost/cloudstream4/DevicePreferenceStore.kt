@@ -44,7 +44,9 @@ class BackupPreferences(preferences: PreferenceStore) {
 }
 class UpdatePreferences(preferences: PreferenceStore) {
     val apkInstaller = preferences.getInt("apk_installer_key",1)
-    val showAppUpdates = preferences.getBoolean("auto_update", true)
+    // Separate from the inherited preference that Celium previously seeded to false.
+    val showAppUpdates = preferences.getBoolean("celium_app_updates", true)
+    val lastAppUpdateCheck = preferences.getLong("celium_last_app_update_check", 0)
     // Node id for this update
     val skipUpdate = preferences.getString("skip_update_key", "")
 }

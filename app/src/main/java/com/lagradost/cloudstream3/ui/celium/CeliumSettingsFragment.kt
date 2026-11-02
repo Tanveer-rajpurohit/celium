@@ -25,12 +25,17 @@ import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import com.lagradost.cloudstream3.AutoDownloadMode
+import com.lagradost.cloudstream3.BuildConfig
+import com.lagradost.cloudstream3.MainActivityScreen
 import com.lagradost.cloudstream3.InternalAPI
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.utils.BaseComposeFragment
 import com.lagradost.cloudstream3.mvvm.logError
+import com.lagradost.cloudstream4.rememberAppSettings
+import com.lagradost.cloudstream4.viewmodels.GithubAction
+import com.mihon.presentation.settings.collectAsState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,6 +92,9 @@ class CeliumSettingsFragment : BaseComposeFragment() {
     override fun Content() {
         val context = LocalContext.current
         val prefs = remember { PreferenceManager.getDefaultSharedPreferences(context) }
+        val updateSettings = rememberAppSettings().updates
+        val showUpdates by updateSettings.showAppUpdates.collectAsState()
+        val updater = MainActivityScreen.githubViewModel()
         var adultEnabled by remember { mutableStateOf(MainAPI.settingsForProvider.enableAdult) }
         val mode by CeliumStyle.mode.collectAsState()
         val accent by CeliumStyle.accent.collectAsState()
@@ -171,6 +179,21 @@ class CeliumSettingsFragment : BaseComposeFragment() {
                                     downloads = it.toInt()
                                     prefs.edit { putInt(getString(R.string.download_parallel_key), downloads) }
                                 }, valueRange = 1f..4f, steps = 2)
+                            }
+                        }
+                        item("updates") {
+                            SettingsGroup("App updates") {
+                                Text("Celium ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Check for updates automatically", fontWeight = FontWeight.Medium)
+                                        Text("Check once a day when you open Celium. You choose when to install.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(showUpdates, { updateSettings.showAppUpdates.set(it) })
+                                }
+                                OutlinedButton(onClick = { updater?.onAction(GithubAction.SearchForUpdate) }) {
+                                    Text("Check for updates")
+                                }
                             }
                         }
                         item("about") {

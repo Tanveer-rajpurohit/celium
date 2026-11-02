@@ -56,8 +56,6 @@ internal object PersonalDefaults {
                 if (!plan.seedV2 && !preferences.contains(adultKey)) putBoolean(adultKey, false)
                 val downloadKey = context.getString(R.string.auto_download_plugins_key)
                 if (!preferences.contains(downloadKey)) putInt(downloadKey, AutoDownloadMode.All.value)
-                val appUpdateKey = context.getString(R.string.auto_update_key)
-                if (!preferences.contains(appUpdateKey)) putBoolean(appUpdateKey, false)
                 val mediaKey = context.getString(R.string.prefer_media_type_key)
                 if (!preferences.contains(mediaKey)) {
                     putStringSet(mediaKey, TvType.entries.map { it.ordinal.toString() }.toSet())

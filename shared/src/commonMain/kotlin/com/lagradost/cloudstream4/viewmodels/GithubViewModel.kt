@@ -13,6 +13,7 @@ import com.lagradost.cloudstream4.state.StateContainer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 @Immutable
 data class GithubState(
@@ -46,7 +47,7 @@ data class GithubFile(
     val digest: String?,
     /** File url for download */
     val downloadUrl: String,
-    /** Filename without the extension */
+    /** Version label shown to users */
     val displayName: String,
     /** Changelog, aka the commit message */
     val changeLog: String,
@@ -54,6 +55,8 @@ data class GithubFile(
     val tagName: String,
     /** Unique node id */
     val nodeId: String,
+    /** Android's monotonic build number, independent of filenames and display versions. */
+    val versionCode: Long,
 )
 
 @Immutable
@@ -155,13 +158,13 @@ class GithubViewModel(
     val remoteRepository: String,
     val remotePrereleaseTag: String,
     val remoteContentType: String,
-    val versionName: String,
+    val versionCode: Long,
     val isPrerelease: Boolean,
-    val isDebug: Boolean,
     val buildSha: String,
     val settings: AppSettings,
     val updater: AppUpdater,
     val repository: GithubRepository,
+    val currentTimeMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) : ViewModel(), StateContainer<GithubState> by DefaultStateContainer(GithubState()),
     ActionHandler<GithubAction> {
     private val updateDispatcher = SingleActiveQuery(Dispatchers.IO)
@@ -186,7 +189,12 @@ class GithubViewModel(
             }
 
             GithubAction.AutoSearchForUpdate -> {
-                if (!isDebug && settings.updates.showAppUpdates.get()) {
+                val now = currentTimeMillis()
+                val lastCheck = settings.updates.lastAppUpdateCheck.get()
+                if (settings.updates.showAppUpdates.get() &&
+                    (lastCheck == 0L || now < lastCheck || now - lastCheck >= 24 * 60 * 60 * 1000L)
+                ) {
+                    settings.updates.lastAppUpdateCheck.set(now)
                     ioSafe {
                         searchForUpdate(prerelease = isPrerelease, fromUser = false)
                     }
@@ -224,6 +232,13 @@ class GithubViewModel(
     }
 
     private suspend fun installUpdate(url: String, digestPair: String?) = dispatchUpdate {
+        // From this point the user requested installation, even if discovery was automatic.
+        updateState {
+            copy(dialog = dialog?.copy(
+                isFromUser = true,
+                state = GithubUpdateDialogState.DownloadProgress(0, null),
+            ))
+        }
         updater.update(
             settings = settings,
             url = url,
@@ -290,8 +305,8 @@ class GithubViewModel(
             contentType = remoteContentType
         )
 
-        // If on stable, only check that the display name matches
-        if (!prerelease && release.displayName == versionName) {
+        // Never offer the installed version or a downgrade, including on debug builds.
+        if (release.versionCode <= versionCode) {
             updateState {
                 copy(dialog = baseDialog.copy(state = GithubUpdateDialogState.NoUpdateFound))
             }

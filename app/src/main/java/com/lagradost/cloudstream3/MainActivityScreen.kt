@@ -23,7 +23,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.lagradost.cloudstream3.mvvm.getStackTracePretty
 import com.lagradost.cloudstream3.plugins.PluginManager
 import com.lagradost.cloudstream3.ui.settings.ApkUpdater
 import com.lagradost.cloudstream3.ui.settings.GithubReleases
@@ -62,9 +61,8 @@ object MainActivityScreen : Screen {
                 remoteRepository = APK_REPOSITORY,
                 remotePrereleaseTag = APK_PRERELEASE,
                 remoteContentType = APK_CONTENT_TYPE,
-                versionName = BuildConfig.VERSION_NAME,
+                versionCode = BuildConfig.VERSION_CODE.toLong(),
                 isPrerelease = BuildConfig.FLAVOR == "prerelease",
-                isDebug = BuildConfig.DEBUG,
                 buildSha = activity.currentCommitHash(),
                 settings = settings,
                 updater = ApkUpdater,
@@ -108,7 +106,7 @@ object MainActivityScreen : Screen {
 
                 cancelable = true
                 title = stringResource(R.string.download_failed)
-                body = { Text(text = state.error.getStackTracePretty()) }
+                body = { Text(text = "Could not complete the update. Check your connection and try again.") }
                 confirmButton = {
                     WhiteButton(text = stringResource(R.string.check_for_update), onClick = {
                         onAction(SearchForUpdate)

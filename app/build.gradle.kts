@@ -85,6 +85,15 @@ android {
     }
 
     signingConfigs {
+        val celiumKeystorePath = providers.environmentVariable("CELIUM_KEYSTORE_PATH").orNull
+        if (celiumKeystorePath != null) {
+            create("celium") {
+                storeFile = file(celiumKeystorePath)
+                storePassword = providers.environmentVariable("CELIUM_KEYSTORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("CELIUM_KEY_ALIAS").get()
+                keyPassword = providers.environmentVariable("CELIUM_KEY_PASSWORD").get()
+            }
+        }
         // We just use SIGNING_KEY_ALIAS here since it won't change
         // so won't kill the configuration cache.
         if (System.getenv("SIGNING_KEY_ALIAS") != null) {
@@ -103,11 +112,12 @@ android {
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "app.celium.android"
+        // Published builds retain the package ID of the APKs already shared with users.
+        applicationId = providers.gradleProperty("celiumApplicationId").getOrElse("app.celium.android")
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 75
-        versionName = "7.0.4-celium"
+        versionCode = 76
+        versionName = "7.0.5-celium"
 
         manifestPlaceholders["target_sdk_version"] = libs.versions.targetSdk.get()
 
@@ -144,6 +154,9 @@ android {
 
     buildTypes {
         release {
+            if (signingConfigs.names.contains("celium")) {
+                signingConfig = signingConfigs.getByName("celium")
+            }
             isDebuggable = false
             isMinifyEnabled = false
             isShrinkResources = false

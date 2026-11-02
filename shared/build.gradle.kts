@@ -52,6 +52,11 @@ kotlin {
         jvmMain.dependencies {
             implementation(libs.ktor.client.java)
         }
+
+        jvmTest.dependencies {
+            implementation(libs.junit)
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }
 
