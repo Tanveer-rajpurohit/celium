@@ -1,4 +1,7 @@
 # Celium 7
+
+For Android, desktop, and the planned website, see [repository structure](structure.md).
+
 A personal Android media app for browsing, search, details, saved titles, viewing history, downloads and settings. Version 7.0.5-celium (76).
 
 This is an installable test build, not a claim of verified playback on every source or production readiness. Read [verification](VERIFICATION.md), [changes](docs/CELIUM_CHANGES.md) and [source research](docs/CELIUM_RESEARCH.md).
