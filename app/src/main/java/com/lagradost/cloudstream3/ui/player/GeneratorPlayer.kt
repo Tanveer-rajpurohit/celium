@@ -36,6 +36,8 @@ import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Format.NO_VALUE
 import androidx.media3.common.MimeTypes
@@ -82,11 +84,10 @@ import com.lagradost.cloudstream3.ui.download.DownloadButtonSetup
 import com.lagradost.cloudstream3.ui.player.CS3IPlayer.Companion.preferredAudioTrackLanguage
 import com.lagradost.cloudstream3.ui.player.CustomDecoder.Companion.updateForcedEncoding
 import com.lagradost.cloudstream3.ui.player.PlayerSubtitleHelper.Companion.toSubtitleMimeType
-import com.lagradost.cloudstream3.ui.player.source_priority.LinkSource
 import com.lagradost.cloudstream3.ui.player.source_priority.ProfileSettings
+import com.lagradost.cloudstream3.ui.celium.CeliumDownloads
+import com.lagradost.cloudstream3.ui.celium.DlState
 import com.lagradost.cloudstream3.ui.player.source_priority.QualityDataHelper
-import com.lagradost.cloudstream3.ui.player.source_priority.QualityDataHelper.getLinkPriority
-import com.lagradost.cloudstream3.ui.player.source_priority.QualityProfileDialog
 import com.lagradost.cloudstream3.ui.result.ACTION_CLICK_DEFAULT
 import com.lagradost.cloudstream3.ui.result.EpisodeAdapter
 import com.lagradost.cloudstream3.ui.result.FOCUS_SELF
@@ -125,9 +126,7 @@ import com.lagradost.cloudstream3.utils.UIHelper.dismissSafe
 import com.lagradost.cloudstream3.utils.UIHelper.fixSystemBarsPadding
 import com.lagradost.cloudstream3.utils.UIHelper.hideProgress
 import com.lagradost.cloudstream3.utils.UIHelper.hideSystemUI
-import com.lagradost.cloudstream3.utils.UIHelper.navigate
 import com.lagradost.cloudstream3.utils.downloader.DownloadObjects
-import com.lagradost.cloudstream3.utils.downloader.DownloadQueueManager
 import com.lagradost.cloudstream3.ui.result.getId
 import com.lagradost.cloudstream3.utils.UIHelper.popCurrentPage
 import com.lagradost.cloudstream3.utils.UIHelper.showProgress
@@ -137,6 +136,9 @@ import com.lagradost.cloudstream3.utils.setText
 import com.lagradost.cloudstream3.utils.txt
 import com.lagradost.cloudstream3.utils.videoskip.VideoSkipStamp
 import com.lagradost.safefile.SafeFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -232,8 +234,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     override fun onTracksInfoChanged() {
         val tracks = player.getVideoTracks()
-        playerBinding?.playerTracksBtt?.isVisible =
-            tracks.allVideoTracks.size > 1 || tracks.allAudioTracks.size > 1
+        playerBinding?.playerTracksBtt?.isVisible = true
         // Only set the preferred language if it is available.
         // Otherwise, it may give some users audio track init failed!
         if (tracks.allAudioTracks.any { it.language == preferredAudioTrackLanguage }) {
@@ -512,6 +513,7 @@ class GeneratorPlayer : FullScreenPlayer() {
      */
     private fun loadLink(link: VideoLink?, sameEpisode: Boolean, resumeAt: Long? = null) {
         if (link == null) return
+        waitingForLinks = false
         isPlayerActive.set(true)
         // manage UI
         binding?.playerLoadingOverlay?.isVisible = false
@@ -586,6 +588,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     /** Position kept across Retry (Requirement 17.8); consumed by [startPlayer]. */
     private var retryPosition: Long? = null
+    private var waitingForLinks = false
 
     /** Link key whose HLS stream already got the highest-track override. */
     private var forcedHighestFor: String? = null
@@ -593,7 +596,6 @@ class GeneratorPlayer : FullScreenPlayer() {
     private fun VideoLink.linkKey(): String =
         first?.let { "${it.name}|${it.url}" } ?: second?.uri?.toString() ?: "null"
 
-    private fun VideoLink.displayName(): String = first?.name ?: second?.name ?: "NULL"
 
     /** Player_Download_Button: visible while an online link plays for an episode (Requirement 18.3). */
     private fun updateDownloadButton() {
@@ -634,9 +636,8 @@ class GeneratorPlayer : FullScreenPlayer() {
         val playingNotDownloadable =
             playingKey != null && infos.firstOrNull { it.key == playingKey }?.downloadable != true
 
-        val labels = downloadable.map { (info, link) ->
-            val height = if (info.height > 0) "${info.height}p" else Qualities.getStringByInt(link.quality)
-            "$height · ${link.name}"
+        val labels = downloadable.mapIndexed { index, (_, link) ->
+            "${StreamLabels.choice(link.name, link.quality, index)} · Size unknown"
         }.toTypedArray()
 
         val builder = AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
@@ -652,7 +653,7 @@ class GeneratorPlayer : FullScreenPlayer() {
             .setSingleChoiceItems(labels, selected) { _, which -> selected = which }
             .setPositiveButton(R.string.celium_confirm) { dialog, _ ->
                 val link = downloadable.getOrNull(selected)?.second ?: return@setPositiveButton
-                DownloadQueueManager.addToQueue(
+                CeliumDownloads.queue(ctx,
                     DownloadObjects.DownloadQueueItem(
                         episode,
                         response.isMovie(),
@@ -667,12 +668,24 @@ class GeneratorPlayer : FullScreenPlayer() {
                     ).toWrapper()
                 )
                 dialog.dismiss()
-                player.handleEvent(CSPlayerEvent.Pause, PlayerEventSource.UI)
-                activity?.navigate(R.id.navigation_downloads)
+                showToast(R.string.download_started, Toast.LENGTH_SHORT)
             }
             // Dismiss or Cancel queues nothing
             .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.dismiss() }
-        builder.show()
+        val dialog = builder.show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            downloadable.mapIndexed { index, (_, link) ->
+                async(Dispatchers.IO) {
+                    index to link.getVideoSize()?.takeIf { it > 0 }
+                }
+            }.awaitAll().forEach { (index, size) ->
+                if (size != null && dialog.isShowing) {
+                    val link = downloadable[index].second
+                    labels[index] = "${StreamLabels.choice(link.name, link.quality, index)} · ${android.text.format.Formatter.formatShortFileSize(ctx, size)}"
+                }
+            }
+            (dialog.listView.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
+        }
     }
 
     /**
@@ -795,6 +808,9 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         var currentSubtitles: List<AbstractSubtitleEntities.SubtitleEntity> = emptyList()
         var currentSubtitle: AbstractSubtitleEntities.SubtitleEntity? = null
+        var searchJob: Job? = null
+        var subtitleJob: Job? = null
+        var searchVersion = 0
 
         val layout = R.layout.sort_bottom_single_choice_double_text
         val arrayAdapter =
@@ -838,7 +854,10 @@ class GeneratorPlayer : FullScreenPlayer() {
                         if (isSingleProvider || item == null) "" else " · ${item.source}"
                     @SuppressLint("SetTextI18n")
                     secondaryTextView?.text = language + providerSuffix
+                    if (item?.isHearingImpaired == true) secondaryTextView?.append(" · Sound descriptions")
 
+                    view.isActivated = item == currentSubtitle
+                    drawableEnd?.contentDescription = "Subtitles include sound descriptions"
                     setHearingImpairedIcon(drawableEnd, position)
                     return view
                 }
@@ -854,13 +873,19 @@ class GeneratorPlayer : FullScreenPlayer() {
 
         binding.subtitleAdapter.setOnItemClickListener { _, _, position, _ ->
             currentSubtitle = currentSubtitles.getOrNull(position) ?: return@setOnItemClickListener
+            binding.applyBtt.isEnabled = true
+            arrayAdapter.notifyDataSetChanged()
         }
 
+        binding.applyBtt.isEnabled = false
         var currentLanguageTagIETF: String = getAutoSelectLanguageTagIETF()
 
 
         fun setSubtitlesList(list: List<AbstractSubtitleEntities.SubtitleEntity>) {
             currentSubtitles = list
+            currentSubtitle = null
+            binding.applyBtt.isEnabled = false
+            binding.subtitleAdapter.clearChoices()
             arrayAdapter.clear()
             arrayAdapter.addAll(currentSubtitles)
         }
@@ -910,15 +935,19 @@ class GeneratorPlayer : FullScreenPlayer() {
         binding.subtitlesSearch.setOnQueryTextListener(object :
             androidx.appcompat.widget.SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
+                searchJob?.cancel()
+                subtitleJob?.cancel()
+                val version = ++searchVersion
+                setSubtitlesList(emptyList())
                 binding.searchLoadingBar.show()
-                ioSafe {
+                searchJob = ioSafe {
                     val search =
                         SubtitleSearch(
                             query = query ?: return@ioSafe,
                             imdbId = loadResponse?.getImdbId(),
-                            tmdbId = loadResponse?.getTMDbId()?.toInt(),
-                            malId = loadResponse?.getMalId()?.toInt(),
-                            aniListId = loadResponse?.getAniListId()?.toInt(),
+                            tmdbId = loadResponse?.getTMDbId()?.toIntOrNull(),
+                            malId = loadResponse?.getMalId()?.toIntOrNull(),
+                            aniListId = loadResponse?.getAniListId()?.toIntOrNull(),
                             epNumber = currentTempMeta.episode,
                             seasonNumber = currentTempMeta.season,
                             lang = currentLanguageTagIETF.ifBlank { null },
@@ -942,7 +971,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                             }
                         }
                     }
-                    val max = results.maxOfOrNull { it.size } ?: return@ioSafe
+                    val max = results.maxOfOrNull { it.size } ?: 0
 
                     // very ugly
                     val items = ArrayList<AbstractSubtitleEntities.SubtitleEntity>()
@@ -955,8 +984,10 @@ class GeneratorPlayer : FullScreenPlayer() {
 
                     // ugly ik
                     activity?.runOnUiThread {
+                        if (version != searchVersion || !dialog.isShowing) return@runOnUiThread
                         setSubtitlesList(items)
                         binding.searchLoadingBar.hide()
+                        if (items.isEmpty()) showToast("No subtitles found. Try another title or language.")
                     }
                 }
 
@@ -1003,10 +1034,11 @@ class GeneratorPlayer : FullScreenPlayer() {
             }
 
             binding.applyBtt.showProgress()
-            ioSafe {
+            subtitleJob?.cancel()
+            subtitleJob = ioSafe {
                 val apiResource =
                     Resource.fromResult(api.resource(currentSubtitle))
-                binding.applyBtt.hideProgress()
+                runOnMainThread { binding.applyBtt.hideProgress() }
                 when (apiResource) {
                     is Resource.Success -> {
                         val subtitles = apiResource.value.getSubtitles().map { resource ->
@@ -1024,12 +1056,20 @@ class GeneratorPlayer : FullScreenPlayer() {
                             )
                         }
                         if (subtitles.isEmpty()) {
-                            showToast(R.string.no_subtitles)
+                            showToast("This result has no usable subtitles. Try another result.")
                             return@ioSafe
                         }
-                        dialog.dismissSafe()
                         runOnMainThread {
-                            addAndSelectSubtitles(*subtitles.toTypedArray())
+                            if (!dialog.isShowing) return@runOnMainThread
+                            dialog.dismissSafe()
+                            if (subtitles.size == 1) {
+                                addAndSelectSubtitles(subtitles.first())
+                            } else {
+                                activity?.showDialog(subtitles.map { it.name }, -1,
+                                    context.getString(R.string.pick_subtitle), true, {}) { index ->
+                                    addAndSelectSubtitles(subtitles[index])
+                                }
+                            }
                         }
                     }
 
@@ -1045,6 +1085,8 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
         dialog.setOnDismissListener {
+            searchJob?.cancel()
+            subtitleJob?.cancel()
             dismissCallback.invoke()
         }
 
@@ -1205,7 +1247,11 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
 
-    override fun showMirrorsDialogue() {
+    override fun showMirrorsDialogue() = showSourceDialog(true)
+
+    override fun showSubtitlesDialogue() = showSourceDialog(false)
+
+    private fun showSourceDialog(showSources: Boolean) {
         try {
             currentSelectedSubtitles = player.getCurrentPreferredSubtitle()
             //println("CURRENT SELECTED :$currentSelectedSubtitles of $currentSubs")
@@ -1218,6 +1264,10 @@ class GeneratorPlayer : FullScreenPlayer() {
                 val binding =
                     PlayerSelectSourceAndSubsBinding.inflate(LayoutInflater.from(ctx), null, false)
                 sourceDialog.setContentView(binding.root)
+                binding.sortSourcesHolder.isVisible = showSources
+                binding.sortSubtitlesHolder.isVisible = !showSources
+                binding.sourceSettingsBtt.isGone = true
+                binding.profilesClickSettings.isFocusable = false
 
                 fixSystemBarsPadding(binding.root)
                 selectSourceDialog = sourceDialog
@@ -1226,6 +1276,15 @@ class GeneratorPlayer : FullScreenPlayer() {
                 val providerList = binding.sortProviders
                 val subtitleList = binding.sortSubtitles
                 val subtitleOptionList = binding.sortSubtitlesOptions
+                if (showSources) {
+                    val qualityFooter = layoutInflater.inflate(R.layout.sort_bottom_footer_add_choice, null) as TextView
+                    qualityFooter.setText(R.string.video_tracks)
+                    qualityFooter.setOnClickListener {
+                        sourceDialog.dismissSafe(activity)
+                        showTrackDialog(true)
+                    }
+                    providerList.addFooterView(qualityFooter)
+                }
 
                 val loadFromFileFooter: TextView =
                     layoutInflater.inflate(R.layout.sort_bottom_footer_add_choice, null) as TextView
@@ -1324,8 +1383,8 @@ class GeneratorPlayer : FullScreenPlayer() {
                     filteredLinks = sortedLinks
 
                     if (sortedLinks.isEmpty()) {
-                        sourceDialog.findViewById<LinearLayout>(R.id.sort_sources_holder)?.isGone =
-                            true
+                        providerList.addHeaderView(TextView(ctx).apply { setText(R.string.no_links_found_toast) }, null, false)
+                        providerList.adapter = ArrayAdapter<String>(ctx, R.layout.sort_bottom_single_choice)
                     } else {
                         startSource = filteredLinks.indexOfFirst { it.link == currentLinkUsed }
                         sourceIndex = startSource
@@ -1333,12 +1392,11 @@ class GeneratorPlayer : FullScreenPlayer() {
                         val sourcesArrayAdapter =
                             ArrayAdapter<String>(ctx, R.layout.sort_bottom_single_choice)
 
-                        sourcesArrayAdapter.addAll(filteredLinks.map { displayLink ->
+                        sourcesArrayAdapter.addAll(filteredLinks.mapIndexed { index, displayLink ->
                             val (link, uri) = displayLink.link
                             val name = link?.name ?: uri?.name ?: "NULL"
-                            val playing = if (displayLink.link == currentLinkUsed) "✓ " else ""
                             val failed = if (displayLink.link.linkKey() in failedKeys) " · $failedLabel" else ""
-                            "$playing$name ${Qualities.getStringByInt(link?.quality)}$failed"
+                            "${StreamLabels.choice(name, link?.quality, index)}$failed"
                         })
 
                         providerList.choiceMode = AbsListView.CHOICE_MODE_SINGLE
@@ -1347,6 +1405,10 @@ class GeneratorPlayer : FullScreenPlayer() {
                         providerList.setItemChecked(sourceIndex, true)
 
                         providerList.setOnItemClickListener { _, _, which, _ ->
+                            if (which >= filteredLinks.size) {
+                                providerList.adapter.getView(which, null, providerList).performClick()
+                                return@setOnItemClickListener
+                            }
                             sourceIndex = which
                             providerList.setItemChecked(which, true)
                         }
@@ -1498,41 +1560,6 @@ class GeneratorPlayer : FullScreenPlayer() {
                     this.selectSourceDialog = null
                 }
 
-                fun setProfileName(profile: Int) {
-                    binding.sourceSettingsBtt.setText(
-                        QualityDataHelper.getProfileName(
-                            profile
-                        )
-                    )
-                }
-                setProfileName(currentQualityProfile)
-
-                binding.profilesClickSettings.setOnClickListener {
-                    val activity = activity ?: return@setOnClickListener
-                    val dialog = QualityProfileDialog(
-                        activity,
-                        R.style.DialogFullscreenPlayer,
-                        viewModel.state.links.mapNotNull {
-                            it.first?.let { extractorLink ->
-                                LinkSource(
-                                    extractorLink
-                                )
-                            }
-                        },
-                        currentQualityProfile
-                    ) { profile ->
-                        currentQualityProfile = profile.id
-                        setProfileName(profile.id)
-                    }
-
-                    dialog.setOnDismissListener {
-                        viewModel.state.clearSortedLinksCache()
-                        refreshLinks(currentQualityProfile)
-                    }
-
-                    dialog.show()
-                }
-
                 binding.subtitlesEncodingFormat.apply {
                     val settingsManager = PreferenceManager.getDefaultSharedPreferences(ctx)
 
@@ -1579,7 +1606,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                 }
 
                 binding.applyBtt.setOnClickListener {
-                    var init = sourceIndex != startSource
+                    var init = showSources && sourceIndex != startSource
                     if (subtitleGroupIndex != subtitleGroupIndexStart || subtitleOptionIndex != subtitleOptionIndexStart) {
                         init = init or if (subtitleGroupIndex <= 0) {
                             noSubtitles()
@@ -1613,7 +1640,9 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
     }
 
-    override fun showTracksDialogue() {
+    override fun showTracksDialogue() = showTrackDialog(false)
+
+    private fun showTrackDialog(videoOnly: Boolean) {
         try {
             //println("CURRENT SELECTED :$currentSelectedSubtitles of $currentSubs")
             context?.let { ctx ->
@@ -1640,8 +1669,13 @@ class GeneratorPlayer : FullScreenPlayer() {
                 val videosList = binding.videoTracksList
                 val audioList = binding.autoTracksList
 
-                binding.videoTracksHolder.isVisible = currentVideoTracks.size > 1
-                binding.audioTracksHolder.isVisible = currentAudioTracks.size > 1
+                binding.videoTracksHolder.isVisible = videoOnly
+                binding.audioTracksHolder.isVisible = !videoOnly
+                binding.subtitlesBtt.isVisible = !videoOnly
+                binding.subtitlesBtt.setOnClickListener {
+                    trackDialog.dismissSafe(activity)
+                    showSourceDialog(false)
+                }
 
                 fun dismiss() {
                     if (isPlaying) {
@@ -1653,10 +1687,10 @@ class GeneratorPlayer : FullScreenPlayer() {
                 val videosArrayAdapter =
                     ArrayAdapter<String>(ctx, R.layout.sort_bottom_single_choice)
 
-                videosArrayAdapter.addAll(currentVideoTracks.mapIndexed { index, format ->
-                    format.label
-                        ?: (if (format.height == NO_VALUE || format.width == NO_VALUE) index else "${format.width}x${format.height}").toString()
+                videosArrayAdapter.addAll(currentVideoTracks.map { format ->
+                    StreamLabels.quality(format.height)
                 })
+                if (currentVideoTracks.isEmpty()) videosArrayAdapter.add("No video quality options available")
 
                 videosList.choiceMode = AbsListView.CHOICE_MODE_SINGLE
                 videosList.adapter = videosArrayAdapter
@@ -1693,7 +1727,7 @@ class GeneratorPlayer : FullScreenPlayer() {
                     currentAudioTracks.mapIndexed { _, track ->
 
                         val language = (
-                                track.language?.trim()?.let { raw ->
+                                track.language?.trim()?.takeIf { it.isNotBlank() && it != "und" }?.let { raw ->
                                     fromTagToLanguageName(raw)
                                         ?: fromTagToLanguageName(
                                             raw.replace('_', '-').substringBefore('-').lowercase()
@@ -1730,6 +1764,8 @@ class GeneratorPlayer : FullScreenPlayer() {
                 )
 
                 audioList.adapter = audioArrayAdapter
+                if (currentAudioTracks.isEmpty()) audioArrayAdapter.add("No audio tracks available")
+                audioList.isEnabled = currentAudioTracks.isNotEmpty()
                 audioList.choiceMode = AbsListView.CHOICE_MODE_SINGLE
 
                 audioList.setSelection(audioIndexStart)
@@ -1747,16 +1783,16 @@ class GeneratorPlayer : FullScreenPlayer() {
 
                 binding.applyBtt.setOnClickListener {
                     val currentTrack = currentAudioTracks.getOrNull(audioIndexStart)
-                    player.setPreferredAudioTrack(
-                        currentTrack?.language,
-                        currentTrack?.id,
-                        currentTrack?.formatIndex,
+                    if (!videoOnly && currentTrack != null) player.setPreferredAudioTrack(
+                        currentTrack.language,
+                        currentTrack.id,
+                        currentTrack.formatIndex,
                     )
 
                     val currentVideo = currentVideoTracks.getOrNull(videoIndex)
                     val width = currentVideo?.width ?: NO_VALUE
                     val height = currentVideo?.height ?: NO_VALUE
-                    if (width != NO_VALUE && height != NO_VALUE) {
+                    if (videoOnly && width != NO_VALUE && height != NO_VALUE) {
                         player.setMaxVideoSize(width, height, currentVideo?.id)
                     }
                     trackDialog.dismissSafe(activity)
@@ -1806,6 +1842,15 @@ class GeneratorPlayer : FullScreenPlayer() {
     private fun noLinksFound() {
         viewModel.forceClearCache = true
         cancelFirstFrameWatchdog()
+        if (viewModel.state.loading is Resource.Loading && linkAttempt != null) {
+            lastKnownPosition = reachedPosition()
+            waitingForLinks = true
+            safe { player.handleEvent(CSPlayerEvent.Pause, PlayerEventSource.UI) }
+            binding?.playerNoLinksHolder?.isVisible = false
+            binding?.playerLoadingOverlay?.isVisible = true
+            return
+        }
+        waitingForLinks = false
         val hiddenLinks = viewModel.state.sortLinks(currentQualityProfile).count { !it.shouldUseLink }
 
         val b = binding ?: return
@@ -1837,6 +1882,7 @@ class GeneratorPlayer : FullScreenPlayer() {
     /** Retry: re-run extraction, clear failure marks, keep the reached position (Requirement 17.8). */
     private fun retryLinks() {
         retryPosition = reachedPosition().takeIf { it > 0L }
+        releasePlayer()
         linkAttempt = LinkFallback.retry(emptyList())
         viewModel.forceClearCache = true
         viewModel.state.clearSortedLinksCache()
@@ -1956,9 +2002,6 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
         val failedPosition = reachedPosition()
-        context?.let { ctx ->
-            showToast(ctx.getString(R.string.celium_trying_link, nextLink.link.displayName()), Toast.LENGTH_SHORT)
-        }
         loadLink(nextLink.link, true, resumeAt = failedPosition)
     }
 
@@ -2201,8 +2244,8 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     fun setPlayerDimen(widthHeight: Pair<Int, Int>?) {
-        val resolution = widthHeight?.let { "${it.first}x${it.second}" }
-        val name = currentSelectedLink?.first?.name ?: currentSelectedLink?.second?.name
+        val resolution = widthHeight?.let { StreamLabels.quality(it.second) }
+        val name = (currentSelectedLink?.first?.name ?: currentSelectedLink?.second?.name)?.let(StreamLabels::source)
         val title = getHeaderName()
 
         val result = listOfNotNull(
@@ -2472,6 +2515,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
     @MainThread
     fun releasePlayer() {
+        waitingForLinks = false
         cancelFirstFrameWatchdog()
         player.release()
         currentSelectedSubtitles = null
@@ -2588,6 +2632,29 @@ class GeneratorPlayer : FullScreenPlayer() {
             onPlayerDownloadClick()
         }
         updateDownloadButton()
+        viewLifecycleOwner.lifecycleScope.launch {
+            var shownFailure: Int? = null
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                CeliumDownloads.items.collect { items ->
+                    val id = (currentMeta as? ResultEpisode)?.id ?: return@collect
+                    val state = items[id]?.state
+                    if (state != DlState.Failed) {
+                        shownFailure = null
+                    } else if (shownFailure != id) {
+                        shownFailure = id
+                        val ctx = context ?: return@collect
+                        AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
+                            .setTitle("Download failed on this source")
+                            .setMessage("Choose another source to download this item. Your playback position is kept.")
+                            .setPositiveButton("Choose another source") { _, _ ->
+                                if ((currentMeta as? ResultEpisode)?.id == id) onPlayerDownloadClick()
+                            }
+                            .setNegativeButton(R.string.cancel, null)
+                            .show()
+                    }
+                }
+            }
+        }
 
         playerBinding?.downloadHeaderToggle?.setOnClickListener {
             playerBinding?.downloadHeader?.let {
@@ -2617,7 +2684,7 @@ class GeneratorPlayer : FullScreenPlayer() {
 
             when (loading) {
                 is Resource.Loading -> {
-                    releasePlayer()
+                    if (!isPlayerActive.get()) releasePlayer()
                 }
 
                 is Resource.Success -> {
@@ -2625,12 +2692,12 @@ class GeneratorPlayer : FullScreenPlayer() {
                     //if (it.value != true) {
                     //    showToast(activity, R.string.unexpected_error, Toast.LENGTH_SHORT)
                     //}
-                    startPlayer()
+                    if (waitingForLinks) nextMirror() else startPlayer()
                 }
 
                 is Resource.Failure -> {
                     showToast(loading.errorString, Toast.LENGTH_LONG)
-                    startPlayer()
+                    if (waitingForLinks) nextMirror() else startPlayer()
                 }
             }
         }
@@ -2641,33 +2708,19 @@ class GeneratorPlayer : FullScreenPlayer() {
             val sortedLinks = viewModel.state.sortLinks(currentQualityProfile)
             val usableLinks = sortedLinks.count { link -> link.shouldUseLink }
 
-            val turnVisible = usableLinks > 0 && viewModel.generator?.canSkipLoading == true
-            val wasGone = binding.overlayLoadingSkipButton.isGone
-
-            binding.overlayLoadingSkipButton.apply {
-                isVisible = turnVisible
-
-                if (usableLinks == 0) {
-                    setText(R.string.skip_loading)
-                } else {
-                    @SuppressLint("SetTextI18n")
-                    text = "${context.getString(R.string.skip_loading)} (${usableLinks})"
-                }
+            binding.overlayLoadingSkipButton.isGone = true
+            if (waitingForLinks && hasNextMirror()) {
+                waitingForLinks = false
+                nextMirror()
+                return@observe
             }
 
             safe {
-                if (!isPlayerActive.get() && viewModel.state.links.any { link ->
-                        getLinkPriority(currentQualityProfile, link.first) >=
-                                QualityDataHelper.AUTO_SKIP_PRIORITY
-                    }
-                ) {
+                if (!isPlayerActive.get() && usableLinks > 0 && viewModel.generator?.canSkipLoading == true) {
                     startPlayer()
                 }
             }
 
-            if (turnVisible && wasGone) {
-                binding.overlayLoadingSkipButton.requestFocus()
-            }
         }
     }
 }

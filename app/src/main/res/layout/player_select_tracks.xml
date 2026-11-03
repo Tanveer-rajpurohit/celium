@@ -128,6 +128,11 @@
             android:layout_width="match_parent"
             android:layout_height="60dp">
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/subtitles_btt"
+            style="@style/BlackButton"
+            android:layout_width="wrap_content"
+            android:text="@string/pick_subtitle" />
 
         <com.google.android.material.button.MaterialButton
             style="@style/WhiteButton"

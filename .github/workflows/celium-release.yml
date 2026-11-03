@@ -55,7 +55,7 @@ jobs:
         run: |
           chmod +x gradlew
           python3 -m unittest discover -s scripts/tests -v
-          ./gradlew :shared:jvmTest :app:testStableReleaseUnitTest :app:assembleStableRelease -PceliumApplicationId="$CELIUM_APPLICATION_ID" --console=plain
+          ./gradlew :shared:jvmTest :app:testStableDebugUnitTest :app:assembleStableRelease -PceliumApplicationId="$CELIUM_APPLICATION_ID" --no-configuration-cache --console=plain
       - name: Verify and package release
         env:
           RELEASE_TAG: ${{ github.ref_name }}

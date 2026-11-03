@@ -25,6 +25,8 @@ import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.mvvm.Resource
 import com.lagradost.cloudstream3.ui.download.*
 import com.lagradost.cloudstream3.utils.BaseComposeFragment
+import com.lagradost.cloudstream3.utils.AppContextUtils.loadResult
+import com.lagradost.cloudstream3.ui.result.START_ACTION_DOWNLOAD_EP
 import com.lagradost.cloudstream3.utils.DOWNLOAD_EPISODE_CACHE
 import com.lagradost.cloudstream3.utils.DataStore.getFolderName
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager
@@ -150,6 +152,7 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
 
     /** One queued, downloading, paused or failed item with the shared state label and actions. */
     @Composable
+    @OptIn(ExperimentalLayoutApi::class)
     private fun ProgressRow(item: DlItem) {
         val context = LocalContext.current
         Column {
@@ -159,7 +162,8 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
                     Text(item.title.ifBlank { "Download" }, style = MaterialTheme.typography.titleMedium)
                     if (item.subtitle.isNotBlank()) Text(item.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     CeliumDownloadActions.label(item.state, item.percent)?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(it, style = MaterialTheme.typography.bodySmall,
+                            color = if (item.state == DlState.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     when (item.state) {
                         DlState.Queued -> LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -168,7 +172,14 @@ class CeliumDownloadsFragment : BaseComposeFragment() {
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (item.state == DlState.Failed) {
+                    CeliumDownloads.sourcePage(item.id)?.let { source ->
+                        TextButton(onClick = {
+                            activity?.loadResult(source.url, source.apiName, source.name, START_ACTION_DOWNLOAD_EP, item.id)
+                        }) { Text("Choose another source") }
+                    } ?: Text("Open the title to choose another source.", style = MaterialTheme.typography.bodySmall)
+                }
                 DownloadBook.actions(item.state).forEach { action ->
                     TextButton(onClick = { CeliumDownloadActions.perform(context, item.id, action) }) { Text(CeliumDownloadActions.text(action)) }
                 }

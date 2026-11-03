@@ -33,8 +33,6 @@ import com.lagradost.cloudstream3.ui.result.ResultFragment.getStoredData
 import com.lagradost.cloudstream3.utils.AppContextUtils.loadSearchResult
 import com.lagradost.cloudstream3.utils.BaseComposeFragment
 import com.lagradost.cloudstream3.utils.UiText
-import com.lagradost.cloudstream3.R
-import com.lagradost.cloudstream3.utils.UIHelper.navigate
 
 /** New details surface, retaining the existing resolver/actions and download queue. */
 class CeliumDetailsFragment : BaseComposeFragment() {
@@ -61,6 +59,7 @@ class CeliumDetailsFragment : BaseComposeFragment() {
     private var recommendations by mutableStateOf<List<SearchResponse>>(emptyList())
     private var popup by mutableStateOf<SelectPopup?>(null)
     private var resolving by mutableStateOf(false)
+    private var resolvingDownload by mutableStateOf(false)
     private var selection by mutableStateOf<String?>(null)
     private var started = false
 
@@ -139,9 +138,8 @@ class CeliumDetailsFragment : BaseComposeFragment() {
     }
 
     private fun action(episode: ResultEpisode, download: Boolean = false) {
-        model.handleAction(EpisodeClickEvent(if (download) ACTION_DOWNLOAD_EPISODE else ACTION_PLAY_EPISODE_IN_PLAYER, episode))
-        // Show the queue right after adding (Requirement 19.2).
-        if (download) activity.navigate(R.id.navigation_downloads)
+        resolvingDownload = download
+        model.handleAction(EpisodeClickEvent(if (download) ACTION_DOWNLOAD_MIRROR else ACTION_PLAY_EPISODE_IN_PLAYER, episode))
     }
 
     /**
@@ -272,7 +270,7 @@ class CeliumDetailsFragment : BaseComposeFragment() {
                     }
                 }
                 if (resolving) AlertDialog(onDismissRequest = { model.cancelLinks() },
-                    title = { Text("Preparing playback") },
+                    title = { Text(if (resolvingDownload) "Finding download sources" else "Preparing playback") },
                     text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Finding available video and subtitle tracks.") } },
                     confirmButton = { TextButton(onClick = { model.skipLoading() }) { Text("Use ready links") } },
                     dismissButton = { TextButton(onClick = { model.cancelLinks() }) { Text("Cancel") } })

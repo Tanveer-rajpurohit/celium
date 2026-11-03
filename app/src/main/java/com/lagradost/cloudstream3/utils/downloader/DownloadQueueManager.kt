@@ -233,7 +233,7 @@ object DownloadQueueManager {
 
         if (currentInstance != null) {
             currentInstance.cancelDownload()
-        } else {
+        } else if (queue.value.any { it.id == id }) {
             removeFromQueue(id)
         }
     }

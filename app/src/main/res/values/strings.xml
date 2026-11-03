@@ -550,7 +550,7 @@
     <string name="compressor_threshold_hint">Sounds louder than %d dB get turned down</string>
     <string name="compressor_makeup_hint">Turns up the overall volume by +%d dB</string>
     <string name="audio_tracks">Audio tracks</string>
-    <string name="video_tracks">Video tracks</string>
+    <string name="video_tracks">Video quality</string>
     <string name="apply_on_restart">Restart the app to see changes.</string>
     <string name="restart">Restart</string>
     <string name="stop">Stop</string>
@@ -821,7 +821,9 @@
     <string name="celium_player_download">Download</string>
     <string name="celium_episode_not_downloadable">This episode cannot be downloaded.</string>
     <string name="celium_playing_link_not_downloadable">The playing link cannot be downloaded.</string>
-    <string name="celium_download_quality">Download quality</string>
+    <string name="celium_download_quality">Download source and quality</string>
+    <string name="celium_player_options">Player options</string>
+    <string name="celium_more">More</string>
     <string name="celium_confirm">Confirm</string>
     <string name="celium_featured">FEATURED</string>
     <string name="celium_featured_position" formatted="true">Featured %1$d of %2$d</string>

@@ -18,6 +18,9 @@ import com.lagradost.cloudstream3.APIHolder.unixTime
 import com.lagradost.cloudstream3.APIHolder.unixTimeMS
 import com.lagradost.cloudstream3.ActorData
 import com.lagradost.cloudstream3.AnimeLoadResponse
+import com.lagradost.cloudstream3.CloudStreamApp
+import com.lagradost.cloudstream3.ui.celium.CeliumDownloads
+import com.lagradost.cloudstream3.ui.player.StreamLabels
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.context
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity.activity
@@ -1225,18 +1228,20 @@ class ResultViewModel2 : ViewModel() {
         isCasting: Boolean = false,
         callback: (Pair<LinkLoadingResult, Int>) -> Unit
     ) {
-        // TODO Add skip loading here
         loadLinks(result, isVisible = true, sourceTypes, isCasting = isCasting) { links ->
-            // Could not find a better way to do this
-            //val context = CloudStreamApp.context
-            postPopup(
-                text,
-                links.links.map { txt("${it.name} ${Qualities.getStringByInt(it.quality)}") }
-                /*.amap {
-                val size =
-                    it.getVideoSize()?.let { size -> " " + formatFileSize(context, size) } ?: ""
-                txt("${it.name} ${Qualities.getStringByInt(it.quality)}$size")
-                }*/) {
+            if (links.links.isEmpty()) {
+                showToast(R.string.no_links_found_toast)
+                return@loadLinks
+            }
+            val context = CloudStreamApp.context
+            val options = links.links.amap { link ->
+                val index = links.links.indexOf(link)
+                val size = link.getVideoSize()?.takeIf { it > 0 }?.let {
+                    context?.let { ctx -> android.text.format.Formatter.formatShortFileSize(ctx, it) }
+                } ?: "Size unknown"
+                txt("${StreamLabels.choice(link.name, link.quality, index)} · $size")
+            }
+            postPopup(text, options) {
                 callback.invoke(links to (it ?: return@postPopup))
             }
         }
@@ -1492,7 +1497,7 @@ class ResultViewModel2 : ViewModel() {
                     LOADTYPE_INAPP_DOWNLOAD,
                     txt(R.string.episode_action_download_mirror)
                 ) { (result, index) ->
-                    DownloadQueueManager.addToQueue(
+                    CeliumDownloads.queue(activity ?: return@acquireSingleLink,
                         DownloadObjects.DownloadQueueItem(
                             click.data,
                             response.isMovie(),
@@ -2527,7 +2532,7 @@ class ResultViewModel2 : ViewModel() {
                     }
                 }
 
-                START_ACTION_LOAD_EP -> {
+                START_ACTION_LOAD_EP, START_ACTION_DOWNLOAD_EP -> {
                     val all = currentEpisodes.values.flatten()
                     val episode =
                         autostart.id?.let { id -> all.firstOrNull { it.id == id } }
@@ -2538,7 +2543,7 @@ class ResultViewModel2 : ViewModel() {
                             ?: return@launchSafe
                     handleAction(
                         EpisodeClickEvent(
-                            getPlayerAction(activity),
+                            if (autostart.startAction == START_ACTION_DOWNLOAD_EP) ACTION_DOWNLOAD_MIRROR else getPlayerAction(activity),
                             episode
                         )
                     )

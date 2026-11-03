@@ -1705,6 +1705,13 @@ object VideoDownloadManager {
             isCancelled = true
         }
 
+        suspend fun awaitFinished() {
+            linkLoadingJob?.join()
+            downloadJob?.join()
+            subtitleDownloadJob?.cancel()
+            subtitleDownloadJob?.join()
+        }
+
         // Run to cancel ongoing work, delete partial work and refresh queue
         private fun cleanup(status: DownloadType) {
             removeKey(KEY_RESUME_IN_QUEUE, downloadQueueWrapper.id.toString())
@@ -1720,7 +1727,10 @@ object VideoDownloadManager {
 
             downloadStatusEvent.invoke(Pair(id, status))
             downloadStatus[id] = status
-            downloadEvent.invoke(Pair(id, DownloadActionType.Stop))
+            // A failure must not become a user cancellation and erase the failed row/resume data.
+            if (status == DownloadType.IsStopped) {
+                downloadEvent.invoke(Pair(id, DownloadActionType.Stop))
+            }
 
             // Force refresh the queue when failed.
             // May lead to some redundant calls, but ensures that the queue is always up to date.
@@ -1814,6 +1824,7 @@ object VideoDownloadManager {
                         )
                     }
 
+                    if (isCancelled) break
                     if (connectionResult.success) { // SUCCESS
                         isCompleted = true
                         break
@@ -1823,10 +1834,10 @@ object VideoDownloadManager {
                     }
                 }
             } catch (e: Exception) {
-                isFailed = true
+                if (!isCancelled) isFailed = true
                 logError(e)
             } finally {
-                isFailed = !isCompleted
+                isFailed = !isCompleted && !isCancelled
                 _currentDownloads.update { downloads ->
                     downloads - id
                 }

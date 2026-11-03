@@ -26,6 +26,7 @@ import kotlinx.serialization.Serializable
 
 const val START_ACTION_RESUME_LATEST = 1
 const val START_ACTION_LOAD_EP = 2
+const val START_ACTION_DOWNLOAD_EP = 3
 
 /**
  * Future proofed way to mark episodes as watched

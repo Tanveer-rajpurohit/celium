@@ -47,6 +47,9 @@ class SubtitleRepo(override val api: SubtitleAPI) : AuthRepo(api) {
         if (cached != null) return@runCatching cached
 
         val returnValue = api.resource(freshAuth(), data)
+        require(returnValue.getSubtitles().isNotEmpty()) {
+            "This result has no usable subtitles. Try another result."
+        }
         resourceCache.withLock {
             val add = SavedResourceResponse(unixTime, returnValue, data)
             if (resourceCache.size > CACHE_SIZE) {

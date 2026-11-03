@@ -9,6 +9,8 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.services.DownloadQueueService
 import com.lagradost.cloudstream3.utils.downloader.DownloadObjects.DownloadQueueWrapper
+import com.lagradost.cloudstream3.utils.downloader.DownloadObjects.DownloadHeaderCached
+import com.lagradost.cloudstream3.utils.DOWNLOAD_HEADER_CACHE
 import com.lagradost.cloudstream3.utils.downloader.DownloadQueueManager
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager
 import com.lagradost.cloudstream3.utils.downloader.VideoDownloadManager.DownloadType
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -285,44 +288,74 @@ object CeliumDownloads {
             // An active download deletes its own partial file once it sees the stop; give it time to close the stream.
             if (wasActive) delay(1_500L)
             if (isLive(id) || records.value.items.any { it.wrapper.id == id }) return@launch
-            deletePartial(appContext, id)
+            runCatching { deletePartial(appContext, id) }.onFailure { logError(it) }
         }
     }
 
     /** Deletes any partial file and queues the recorded item again from 0 bytes, keeping its list position. */
-    fun retry(context: Context, id: Int) {
+    fun retry(context: Context, id: Int, replacement: DownloadQueueWrapper? = null) {
         val record = records.value.items.firstOrNull { it.wrapper.id == id } ?: return
         val appContext = context.applicationContext
-        retrying.add(id)
+        if (!retrying.add(id)) return
+        val previous = DownloadQueueService.downloadInstances.value.firstOrNull { it.downloadQueueWrapper.id == id }
+        fun isCurrentRetry() = id in retrying && records.value.items.any {
+            it.wrapper.id == id && it.addedSeq == record.addedSeq
+        }
         bump()
         scope.launch {
             try {
+                check(withTimeoutOrNull(30_000L) {
+                    previous?.awaitFinished()
+                    VideoDownloadManager.currentDownloads.first { id !in it }
+                    true
+                } == true) { "The previous download is still stopping. Try again shortly." }
+                if (!isCurrentRetry()) return@launch
                 removeKey(KEY_RESUME_PACKAGES, id.toString())
                 deletePartial(appContext, id)
+                if (!isCurrentRetry()) return@launch
                 // Deletion emits stop/delete events; restore the record with its original order.
                 mutate { recs ->
                     val others = recs.items.filterNot { it.wrapper.id == id }
-                    recs.copy(items = others + record.copy(failed = false))
+                    recs.copy(items = others + record.copy(wrapper = replacement ?: record.wrapper, failed = false))
                 }
                 statuses.remove(id)
                 progress.remove(id)
                 fileSizes.remove(id)
-                // The stop event's queue removal runs asynchronously; let it settle before re-adding.
-                delay(500L)
-                DownloadQueueManager.addToQueue(record.wrapper)
+                DownloadQueueManager.addToQueue(replacement ?: record.wrapper)
             } catch (t: Throwable) {
-                logError(t)
+                if (isCurrentRetry()) {
+                    logError(t)
+                    setFailed(id, true)
+                    statuses[id] = DownloadType.IsFailed
+                }
             } finally {
-                retrying.remove(id)
+                if (isCurrentRetry()) retrying.remove(id)
                 bump()
             }
         }
     }
 
+    /** Choosing a new source must discard the old source's partial bytes and resume URL. */
+    fun queue(context: Context, wrapper: DownloadQueueWrapper) {
+        if (stateOf(wrapper.id) == DlState.Failed) retry(context, wrapper.id, wrapper)
+        else DownloadQueueManager.addToQueue(wrapper)
+    }
+
+    fun sourcePage(id: Int): DownloadHeaderCached? {
+        val wrapper = records.value.items.firstOrNull { it.wrapper.id == id }?.wrapper ?: return null
+        wrapper.downloadItem?.let { item ->
+            return DownloadHeaderCached(item.apiName, item.resultUrl, item.resultType,
+                item.resultName, item.resultPoster, 0L, item.resultId)
+        }
+        return runCatching { getKey<DownloadHeaderCached>(DOWNLOAD_HEADER_CACHE, wrapper.parentId.toString()) }.getOrNull()
+    }
+
     private suspend fun deletePartial(context: Context, id: Int) {
-        val done = CompletableDeferred<Unit>()
-        VideoDownloadManager.deleteFilesAndUpdateSettings(context, setOf(id), scope) { done.complete(Unit) }
-        withTimeoutOrNull(5_000L) { done.await() }
+        val hasFile = VideoDownloadManager.getDownloadFileInfo(context, id) != null
+        val done = CompletableDeferred<Set<Int>>()
+        VideoDownloadManager.deleteFilesAndUpdateSettings(context, setOf(id), scope) { done.complete(it) }
+        val removed = withTimeoutOrNull(5_000L) { done.await() }
+        check(removed != null && (!hasFile || id in removed)) { "Could not remove the previous partial download" }
         fileSizes.remove(id)
     }
 

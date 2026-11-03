@@ -199,6 +199,8 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
         throw NotImplementedError()
     }
 
+    open fun showSubtitlesDialogue() = showMirrorsDialogue()
+
     open fun openOnlineSubPicker(
         context: Context,
         loadResponse: LoadResponse?,
@@ -312,13 +314,7 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
     }
 
     override fun subtitlesChanged() {
-        val tracks = player.getVideoTracks()
-        val isBuiltinSubtitles = tracks.currentTextTracks.all { track ->
-            track.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES
-        }
-        // Subtitle offset is not possible on built-in media3 tracks
-        playerBinding?.playerSubtitleOffsetBtt?.isGone =
-            isBuiltinSubtitles || tracks.currentTextTracks.isEmpty()
+        playerBinding?.playerSubtitleOffsetBtt?.isVisible = true
     }
 
     private fun restoreOrientationWithSensor(activity: Activity) {
@@ -1397,14 +1393,14 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
                                 ?: currentQualityProfile
             }
             playerBinding?.apply {
-                playerSpeedBtt.isVisible = playBackSpeedEnabled
-                playerCompressorBtt.isVisible = playBackCompressorEnabled
+                playerSpeedBtt.isGone = true
+                playerCompressorBtt.isGone = true
                 if (playBackCompressorEnabled) {
                     restoreCompressorSettings()
                 }
-                playerResizeBtt.isVisible = playerResizeEnabled
-                playerRotateBtt.isVisible =
-                    if (isLayout(TV or EMULATOR)) false else playerRotateEnabled
+                playerResizeBtt.isGone = true
+                playerRotateBtt.isGone = true
+                playerSubtitleOffsetBtt.isVisible = true
                 if (hideControlsNames) {
                     hideControlsNames()
                 }
@@ -1494,7 +1490,25 @@ open class FullScreenPlayer : AbstractPlayerFragment<FragmentPlayerBinding>(
             }
 
             playerSubtitleOffsetBtt.setOnClickListener {
-                showSubtitleOffsetDialog()
+                val ctx = context ?: return@setOnClickListener
+                val tracks = player.getVideoTracks()
+                val actions = mutableListOf<Pair<String, () -> Unit>>()
+                if (playBackSpeedEnabled) actions += getString(R.string.player_speed) to { showSpeedDialog() }
+                if (playerResizeEnabled) actions += getString(R.string.video_aspect_ratio_resize) to { nextResize() }
+                if (playBackCompressorEnabled) actions += getString(R.string.compressor) to { showCompressorDialog() }
+                if (playerRotateEnabled && !isLayout(TV or EMULATOR)) actions += getString(R.string.rotate_video) to { toggleRotate() }
+                if (tracks.currentTextTracks.any { it.sampleMimeType != MimeTypes.APPLICATION_MEDIA3_CUES }) {
+                    actions += getString(R.string.subtitle_offset_title) to { showSubtitleOffsetDialog() }
+                } else {
+                    actions += "${getString(R.string.subtitle_offset_title)} (unavailable)" to {
+                        com.lagradost.cloudstream3.CommonActivity.showToast("Subtitle sync is unavailable for this track.")
+                    }
+                }
+                actions += getString(R.string.pick_subtitle) to { showSubtitlesDialogue() }
+                AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
+                    .setTitle(R.string.celium_player_options)
+                    .setItems(actions.map { it.first }.toTypedArray()) { _, index -> actions[index].second() }
+                    .show()
             }
 
             playerGoBack.setOnClickListener {

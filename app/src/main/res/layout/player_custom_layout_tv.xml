@@ -1099,11 +1099,13 @@
                             android:nextFocusRight="@id/player_sources_btt"
                             android:nextFocusUp="@id/player_pause_play"
                             android:nextFocusDown="@id/player_sources_btt"
-                            android:text="@string/subtitle_offset"
+                            android:text="@string/celium_more"
 
-                            android:visibility="gone"
-                            app:icon="@drawable/ic_outline_subtitles_24"
-                            tools:visibility="visible" />
+                            android:visibility="visible"
+                            app:icon="@drawable/ic_menu_24"
+                            tools:visibility="visible"
+                                android:contentDescription="@string/celium_player_options"
+                                />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/player_sources_btt"

@@ -7,9 +7,7 @@ import com.lagradost.cloudstream3.ui.player.SubtitleOrigin
 import okio.BufferedSource
 import okio.buffer
 import okio.sink
-import okio.source
 import java.io.File
-import java.util.zip.ZipInputStream
 
 /**
  * A builder for subtitle files.
@@ -21,34 +19,25 @@ class SubtitleResource {
         val file = File.createTempFile("temp-subtitle", ".tmp").apply {
             deleteFileOnExit(this)
         }
-        val sink = file.sink().buffer()
-        sink.writeAll(source)
-        sink.close()
-        source.close()
-
-        return file
-    }
-
-    private fun unzip(file: File): List<Pair<String, File>> {
-        val entries = mutableListOf<Pair<String, File>>()
-
-        ZipInputStream(file.inputStream()).use { zipInputStream ->
-            var zipEntry = zipInputStream.nextEntry
-
-            while (zipEntry != null) {
-                val tempFile = File.createTempFile("unzipped-subtitle", ".tmp").apply {
-                    deleteFileOnExit(this)
+        try {
+            source.use { input ->
+                file.sink().buffer().use { sink ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val size = input.read(buffer)
+                        if (size < 0) break
+                        total += size
+                        require(total <= 16L * 1024 * 1024) { "Subtitle download is too large" }
+                        sink.write(buffer, 0, size)
+                    }
                 }
-                entries.add(zipEntry.name to tempFile)
-
-                tempFile.sink().buffer().use { buffer ->
-                    buffer.writeAll(zipInputStream.source())
-                }
-
-                zipEntry = zipInputStream.nextEntry
             }
+            return file
+        } catch (error: Exception) {
+            file.delete()
+            throw error
         }
-        return entries
     }
 
     data class SingleSubtitleResource(
@@ -81,12 +70,13 @@ class SubtitleResource {
         url: String,
         nameGenerator: (String, File) -> String? = { _, _ -> null }
     ) {
-        val source = app.get(url).okhttpResponse.body.source()
-        val zip = downloadFile(source)
-        val realFiles = unzip(zip)
-        zip.deleteRecursively()
+        val zip = app.get(url).okhttpResponse.use { response ->
+            require(response.isSuccessful) { "Subtitle download failed (HTTP ${response.code}). Try another result." }
+            downloadFile(response.body.source())
+        }
+        val realFiles = try { SubtitleArchive.extract(zip) } finally { zip.delete() }
         realFiles.forEach { (name, subtitleFile) ->
-            addFile(subtitleFile, nameGenerator(name, subtitleFile))
+            addFile(subtitleFile, nameGenerator(name, subtitleFile) ?: name)
         }
     }
 }

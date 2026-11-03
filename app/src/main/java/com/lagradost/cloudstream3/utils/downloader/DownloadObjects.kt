@@ -37,7 +37,9 @@ object DownloadObjects {
         /** Loop through the current download instances to see if it is currently downloading. Also includes link loading. */
         @JsonIgnore
         fun isCurrentlyDownloading(): Boolean {
-            return DownloadQueueService.downloadInstances.value.any { it.downloadQueueWrapper.id == this.id }
+            return DownloadQueueService.downloadInstances.value.any {
+                it.downloadQueueWrapper.id == this.id && !it.isCompleted && !it.isFailed && !it.isCancelled
+            }
         }
 
         @JsonProperty("id") @SerialName("id")

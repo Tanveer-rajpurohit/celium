@@ -3,6 +3,8 @@ package com.lagradost.cloudstream3.ui.celium
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,7 +38,7 @@ object CeliumDownloadActions {
         DlState.Downloading -> "Downloading $percent%"
         DlState.Paused -> "Paused"
         DlState.Completed -> "Completed"
-        DlState.Failed -> "Failed"
+        DlState.Failed -> "Download failed on this source"
     }
 
     fun text(action: DlAction): String = when (action) {
@@ -90,6 +92,7 @@ object CeliumDownloadActions {
  * Reads the same `CeliumDownloads.items` flow as the Downloads page.
  */
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun CeliumDownloadControl(id: Int, onDownload: () -> Unit, onPlay: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val items by CeliumDownloads.items.collectAsState()
@@ -103,9 +106,12 @@ fun CeliumDownloadControl(id: Int, onDownload: () -> Unit, onPlay: () -> Unit, m
         }
     }
     val state = item?.state ?: CeliumDownloads.stateOf(id) ?: onDisk
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         CeliumDownloadActions.label(state, item?.percent ?: 0)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (state == DlState.Failed) {
+            TextButton(onClick = onDownload) { Text("Choose another source") }
         }
         DownloadBook.actions(state).forEach { action ->
             TextButton(onClick = {
