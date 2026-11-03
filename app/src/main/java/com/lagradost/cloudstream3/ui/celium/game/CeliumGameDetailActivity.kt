@@ -21,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -207,36 +208,51 @@ class CeliumGameDetailActivity : ComponentActivity() {
                     contentPadding = PaddingValues(bottom = 36.dp),
                     verticalArrangement = Arrangement.spacedBy(20.dp)
                 ) {
-                    // Hero Poster & Header Details
+                    // Hero Poster & Header Details (Full-width 16:9 Banner)
                     item("hero_header") {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        val bannerUrl = current.posterUrl ?: current.screenshots.firstOrNull() ?: initialPoster
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
+                            // Full-width Widescreen Banner
                             Box(
                                 Modifier
-                                    .width(130.dp)
-                                    .height(185.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f)
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable { bannerUrl.takeIf { it.isNotBlank() }?.let { previewImage = it } }
                             ) {
                                 CeliumArtwork(
-                                    url = current.posterUrl ?: initialPoster,
+                                    url = bannerUrl,
                                     headers = mapOf("Referer" to refererUrl),
                                     crop = true,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color.Transparent,
+                                                    Color.Black.copy(alpha = 0.45f)
+                                                )
+                                            )
+                                        )
+                                )
                             }
 
+                            // Title, Author, Badges, Stats
                             Column(
-                                Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(
                                     text = current.name,
-                                    style = MaterialTheme.typography.titleLarge,
+                                    style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis
@@ -297,20 +313,25 @@ class CeliumGameDetailActivity : ComponentActivity() {
                                     }
                                 }
 
-                                current.views?.takeIf { it.isNotBlank() }?.let { views ->
-                                    Text(
-                                        text = views,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    current.views?.takeIf { it.isNotBlank() }?.let { views ->
+                                        Text(
+                                            text = views,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
 
-                                current.updatedAt?.takeIf { it.isNotBlank() }?.let { updated ->
-                                    Text(
-                                        text = if (updated.startsWith("updated", ignoreCase = true)) updated else "Updated: $updated",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    current.updatedAt?.takeIf { it.isNotBlank() }?.let { updated ->
+                                        Text(
+                                            text = if (updated.startsWith("updated", ignoreCase = true)) updated else "Updated: $updated",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }

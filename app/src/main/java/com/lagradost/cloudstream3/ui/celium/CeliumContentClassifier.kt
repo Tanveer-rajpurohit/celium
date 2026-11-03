@@ -22,9 +22,12 @@ object CeliumContentClassifier {
         "kollywood", "netflix movies", "prime movies", "amazon movies", "disney movies"
     )
 
-    /** Title hints: season/episode markers, part numbers, or series keywords. */
+    /**
+     * Title hints: season/episode markers or series keywords. A bare "Part 2" or "Vol 1" is not a hint:
+     * film titles use them ("Dune Part 2", "Kill Bill Vol. 1"), so they no longer force a title into TV Shows.
+     */
     private val titleHint = Regex(
-        """\b(season|seasons|episode|episodes|series|serial)\b|\bS\d{1,2}\b|\bEP?\d{1,3}\b|\bS\d{1,2}\s*(?:E\d{1,2}|EP\d{1,3}|-\s*S\d{1,2})|\b(?:Complete|Full)\s+(?:Season|Series)|\b(?:Part|Vol|Volume)\s*\d+""",
+        """\b(season|seasons|episode|episodes|series|serial)\b|\bS\d{1,2}\b|\bEP?\d{1,3}\b|\bS\d{1,2}\s*(?:E\d{1,2}|EP\d{1,3}|-\s*S\d{1,2})|\b(?:Complete|Full)\s+(?:Season|Series)""",
         RegexOption.IGNORE_CASE
     )
 
