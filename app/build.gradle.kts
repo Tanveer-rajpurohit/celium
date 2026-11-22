@@ -167,7 +167,10 @@ android {
         }
         debug {
             isDebuggable = true
-            applicationIdSuffix = ".debug"
+            // Published releases already use "app.celium.android.debug" (see celium-release.yml),
+            // so test builds need a different ID to install alongside the real app.
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
