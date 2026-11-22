@@ -143,6 +143,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.cast.LinkCheck
 import java.io.Serializable
 import java.lang.ref.WeakReference
 import java.util.Calendar
@@ -154,6 +157,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 @OptIn(UnstableApi::class)
 class GeneratorPlayer : FullScreenPlayer() {
     companion object {
+        /** Quality picked in the quality menu (null = Auto); kept for the next episodes. */
+        @Volatile var sessionQuality: Int? = null
+        /** Audio language being listened to (two-letter tag); kept for the next episodes. */
+        @Volatile var sessionLanguage: String? = null
+
         const val NOTIFICATION_ID = 2326
         const val CHANNEL_ID = 7340
         const val STOP_ACTION = "stopcs3"
@@ -237,15 +245,17 @@ class GeneratorPlayer : FullScreenPlayer() {
         playerBinding?.playerTracksBtt?.isVisible = true
         // Only set the preferred language if it is available.
         // Otherwise, it may give some users audio track init failed!
-        if (tracks.allAudioTracks.any { it.language == preferredAudioTrackLanguage }) {
+        if (pendingLanguageCheck == null && tracks.allAudioTracks.any { it.language == preferredAudioTrackLanguage }) {
             player.setPreferredAudioTrack(preferredAudioTrackLanguage)
         }
+        safe { checkAudioLanguage(tracks) }
         safe { forceHighestHlsTrack(tracks) }
         updatePlayerInfo()
     }
 
     override fun playerStatusChanged() {
         super.playerStatusChanged()
+        safe { trackBuffering() }
         if (player.getIsPlaying()) {
             viewModel.forceClearCache = false
         }
@@ -572,6 +582,235 @@ class GeneratorPlayer : FullScreenPlayer() {
         if (link.first != null && !isTorrent) startFirstFrameWatchdog() else cancelFirstFrameWatchdog()
     }
 
+
+    // ---- Celium quality menu: Auto + qualities, same audio language (YouTube-style) ----
+
+    private data class LanguageCheck(val language: String, val quality: Int?, val previous: VideoLink?, val key: String)
+
+    private var qualitySwitchJob: Job? = null
+    /** After a quality switch to a link whose name doesn't confirm the language, check the real audio tracks. */
+    private var pendingLanguageCheck: LanguageCheck? = null
+    /** Links rejected because they lacked the wanted audio language. */
+    private val languageRejected = HashSet<String>()
+    private var bufferingStartedAt = 0L
+    private val longBuffers = ArrayDeque<Long>()
+
+    private fun DisplayLink.option(): StreamOption? =
+        link.first?.let { StreamOption(link.linkKey(), it.source, it.name, it.quality) }
+
+    private fun wantedLanguage(): String? = sessionLanguage ?: StreamChoice.normalize(preferredAudioTrackLanguage)
+
+    private fun unusableKeys(): Set<String> = (linkAttempt?.failed ?: emptySet()) +
+            viewModel.state.erroredLinks.map { it.linkKey() } + languageRejected
+
+    /** The quality button opens the quality menu; "Advanced" opens the full source list. */
+    override fun showMirrorsDialogue() = showQualityDialog()
+
+    private fun showQualityDialog() {
+        val ctx = context ?: return
+        val options = playerSourceList().mapNotNull { it.option() }
+        if (options.isEmpty()) return showSourceDialog(true) // e.g. a downloaded file
+        val rows = StreamChoice.available(options, unusableKeys())
+        val playing = currentSelectedLink?.first?.let { StreamChoice.bucket(it.quality) }
+        val cap = ConnectionQuality.autoCap(ctx)
+        val labels = mutableListOf(
+            "Auto" + (playing?.takeIf { sessionQuality == null }?.let { " (${StreamChoice.label(it)})" } ?: "") +
+                    " · up to ${StreamChoice.label(cap)} for your connection"
+        )
+        rows.forEach { row ->
+            labels += row.label + when {
+                !row.working -> " · didn't work"
+                row.bucket == playing -> " · playing"
+                else -> ""
+            }
+        }
+        val checked = sessionQuality?.let { q -> rows.indexOfFirst { it.bucket == q } + 1 }?.takeIf { it > 0 } ?: 0
+        val language = wantedLanguage()
+        AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
+            .setTitle("Quality · Audio: ${language?.let(StreamChoice::languageName) ?: "any"}")
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { dialog, which ->
+                dialog.dismiss()
+                chooseQuality(if (which == 0) null else rows[which - 1].bucket)
+            }
+            .setNeutralButton("Advanced: choose source") { dialog, _ ->
+                dialog.dismiss()
+                showSourceDialog(true)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Finds a working link at [quality] (null = Auto) in the wanted audio language, preferring the
+     * source family already playing. The current video keeps playing while links are checked.
+     */
+    private fun chooseQuality(quality: Int?) {
+        val previousChoice = sessionQuality
+        sessionQuality = quality
+        val options = playerSourceList().mapNotNull { it.option() }
+        val unusable = unusableKeys()
+        val current = currentSelectedLink
+        val currentOption = current?.first?.let { StreamOption(current.linkKey(), it.source, it.name, it.quality) }
+        val language = wantedLanguage()
+        val languageOk = currentOption == null || StreamChoice.match(currentOption.languages, language) != LangMatch.Other
+        val candidates = if (quality == null) {
+            val order = StreamChoice.autoOrder(options, ConnectionQuality.autoCap(context), language, unusable)
+                .filter { StreamChoice.match(it.languages, language) != LangMatch.Other }
+            if (order.firstOrNull()?.bucket == currentOption?.bucket && languageOk) return
+            order.take(6)
+        } else {
+            if (currentOption?.bucket == quality && languageOk) return
+            StreamChoice.candidates(options, quality, language, current?.first?.source, unusable)
+        }
+        if (candidates.isEmpty()) {
+            if (quality != null) showQualityFallback(quality, previousChoice, noneWorked = false)
+            return
+        }
+        val what = quality?.let(StreamChoice::label) ?: "the best quality"
+        showToast("Finding $what${language?.let { " in ${StreamChoice.languageName(it)}" }.orEmpty()}…")
+        trySwitch(candidates, quality) {
+            if (quality != null) showQualityFallback(quality, previousChoice, noneWorked = true)
+            else showToast("No other quality worked, staying on the current one")
+        }
+    }
+
+    /** Checks [candidates] on the phone in order and switches to the first working one at the same position. */
+    private fun trySwitch(candidates: List<StreamOption>, quality: Int?, onNone: () -> Unit) {
+        qualitySwitchJob?.cancel()
+        qualitySwitchJob = viewLifecycleOwner.lifecycleScope.launch {
+            val list = playerSourceList()
+            for (option in candidates) {
+                val display = list.firstOrNull { it.link.linkKey() == option.key } ?: continue
+                val link = display.link.first ?: continue
+                val problem = withContext(Dispatchers.IO) {
+                    LinkCheck.check(app.baseClient, link.url, link.getAllHeaders(), link.type == ExtractorLinkType.M3U8)
+                }
+                if (problem != null) continue
+                switchToLink(display.link, option, quality)
+                return@launch
+            }
+            onNone()
+        }
+    }
+
+    private fun switchToLink(link: VideoLink, option: StreamOption, quality: Int?) {
+        val previous = currentSelectedLink
+        val position = reachedPosition()
+        linkAttempt = refreshedAttempt()?.let { LinkFallback.onUserSelect(it, link.linkKey()) }
+        val language = wantedLanguage()
+        pendingLanguageCheck =
+            if (language != null && StreamChoice.match(option.languages, language) != LangMatch.Match)
+                LanguageCheck(language, quality, previous, link.linkKey())
+            else null
+        loadLink(link, true, resumeAt = position)
+    }
+
+    /** Called with the real audio tracks: confirms the language after a switch and remembers what plays. */
+    private fun checkAudioLanguage(tracks: CurrentTracks) {
+        val available = tracks.allAudioTracks.mapNotNull { StreamChoice.normalize(it.language) }.distinct()
+        val check = pendingLanguageCheck
+        if (check != null) {
+            if (available.isEmpty()) { pendingLanguageCheck = null; return } // the file doesn't say
+            pendingLanguageCheck = null
+            if (check.language !in available) {
+                showLanguageMissing(check, available)
+                return
+            }
+            tracks.allAudioTracks.firstOrNull { StreamChoice.normalize(it.language) == check.language }?.language
+                ?.let { player.setPreferredAudioTrack(it) }
+            return
+        }
+        StreamChoice.normalize(tracks.currentAudioTrack?.language)?.let { sessionLanguage = it }
+    }
+
+    private fun showLanguageMissing(check: LanguageCheck, available: List<String>) {
+        val ctx = context ?: return
+        val wanted = StreamChoice.languageName(check.language)
+        val has = available.joinToString(", ") { StreamChoice.languageName(it) }
+        val what = check.quality?.let(StreamChoice::label) ?: "This"
+        AlertDialog.Builder(ctx, R.style.AlertDialogCustom)
+            .setTitle("$what source has no $wanted audio")
+            .setMessage("It plays in $has. Keep searching for $wanted, or use this one?")
+            .setPositiveButton("Keep searching") { _, _ ->
+                languageRejected += check.key
+                chooseQuality(check.quality)
+            }
+            .setNegativeButton("Use this one") { _, _ ->
+                sessionLanguage = available.firstOrNull()
+            }
+            .apply {
+                check.previous?.let { previous ->
+                    setNeutralButton("Go back") { _, _ ->
+                        languageRejected += check.key
+                        loadLink(previous, true, resumeAt = reachedPosition())
+                    }
+                }
+            }
+            .show()
+    }
+
+    /** No link at [quality] in the wanted language (or none worked): offer real alternatives. */
+    private fun showQualityFallback(quality: Int, previousChoice: Int?, noneWorked: Boolean) {
+        val ctx = context ?: return
+        val options = playerSourceList().mapNotNull { it.option() }
+        val language = wantedLanguage()
+        val fallback = StreamChoice.fallback(options, quality, language, unusableKeys())
+        val q = StreamChoice.label(quality)
+        val wanted = language?.let(StreamChoice::languageName)
+        val choices = mutableListOf<Pair<String, () -> Unit>>()
+        fallback.otherLanguages.forEach { tag ->
+            choices += "Play $q in ${StreamChoice.languageName(tag)}" to { sessionLanguage = tag; chooseQuality(quality) }
+        }
+        fallback.nearestQuality?.let { nearest ->
+            choices += "Play ${StreamChoice.label(nearest)}${wanted?.let { " in $it" }.orEmpty()}" to { chooseQuality(nearest) }
+        }
+        val playing = currentSelectedLink?.first?.let { StreamChoice.bucket(it.quality) }
+        val title = when {
+            noneWorked -> "No working $q source"
+            wanted != null -> "No $q with $wanted audio"
+            else -> "No working $q source"
+        }
+        val message = when {
+            noneWorked -> "Every $q source${wanted?.let { " in $it" }.orEmpty()} was blocked or expired."
+            wanted != null && fallback.otherLanguages.isNotEmpty() ->
+                "$q is only available in ${fallback.otherLanguages.joinToString(", ") { StreamChoice.languageName(it) }}."
+            wanted != null -> "There's no $q source in $wanted for this title."
+            else -> "There's no $q source for this title."
+        }
+        val builder = AlertDialog.Builder(ctx, R.style.AlertDialogCustom).setTitle(title)
+        if (choices.isEmpty()) builder.setMessage(message)
+        else builder.setItems(choices.map { it.first }.toTypedArray()) { _, which -> choices[which].second() }
+        builder.setNegativeButton(if (playing != null) "Stay on ${StreamChoice.label(playing)}" else getString(R.string.cancel)) { _, _ ->
+            sessionQuality = previousChoice
+        }
+        builder.show()
+    }
+
+    /** Auto: three long stalls within a minute step down one quality, like YouTube. */
+    private fun trackBuffering() {
+        val now = System.currentTimeMillis()
+        if (currentPlayerStatus == CSPlayerLoading.IsBuffering) {
+            if (bufferingStartedAt == 0L) bufferingStartedAt = now
+            return
+        }
+        if (bufferingStartedAt == 0L) return
+        val took = now - bufferingStartedAt
+        bufferingStartedAt = 0L
+        if (took < 2_000 || reachedPosition() < 10_000 || sessionQuality != null) return
+        longBuffers.addLast(now)
+        while (longBuffers.isNotEmpty() && now - longBuffers.first() > 60_000) longBuffers.removeFirst()
+        if (longBuffers.size < 3) return
+        longBuffers.clear()
+        val playing = currentSelectedLink?.first?.let { StreamChoice.bucket(it.quality) } ?: return
+        val options = playerSourceList().mapNotNull { it.option() }
+        val language = wantedLanguage()
+        val lower = StreamChoice.available(options, unusableKeys()).filter { it.working && it.bucket < playing }.maxOfOrNull { it.bucket } ?: return
+        val candidates = StreamChoice.candidates(options, lower, language, currentSelectedLink?.first?.source, unusableKeys())
+        if (candidates.isEmpty()) return
+        trySwitch(candidates, null) {}
+        showToast("Auto: switching to ${StreamChoice.label(lower)} for smoother playback")
+    }
+
     // ---- Celium link fallback (Requirement 17) and highest quality (Requirement 18.1) ----
 
     /** Fallback state of the current playback attempt; null before the first link is started. */
@@ -708,8 +947,15 @@ class GeneratorPlayer : FullScreenPlayer() {
     }
 
     /** Keys that may be auto-started: links hidden by the profile are listed but never auto-tried. */
-    private fun autoOrder(list: List<DisplayLink> = playerSourceList()): List<String> =
-        list.filter { it.shouldUseLink }.map { it.link.linkKey() }.distinct()
+    private fun autoOrder(list: List<DisplayLink> = playerSourceList()): List<String> {
+        val usable = list.filter { it.shouldUseLink }
+        val options = usable.mapNotNull { it.option() }
+        val language = wantedLanguage()
+        val chosen = sessionQuality?.let { StreamChoice.candidates(options, it, language, null) }.orEmpty()
+        val auto = StreamChoice.autoOrder(options, ConnectionQuality.autoCap(context), language)
+        // Links without an online source (downloads) keep their place at the end.
+        return ((chosen + auto).map { it.key } + usable.map { it.link.linkKey() }).distinct()
+    }
 
     /** The current attempt with the latest order (links may still be arriving). */
     private fun refreshedAttempt(): LinkAttempt? {
@@ -1247,7 +1493,6 @@ class GeneratorPlayer : FullScreenPlayer() {
         }
 
 
-    override fun showMirrorsDialogue() = showSourceDialog(true)
 
     override fun showSubtitlesDialogue() = showSourceDialog(false)
 
