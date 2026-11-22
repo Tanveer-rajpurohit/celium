@@ -1,6 +1,6 @@
 # Celium 7
 
-For Android, desktop, and the planned website, see [repository structure](structure.md).
+For Android and desktop, see [repository structure](structure.md).
 
 A personal Android media app for browsing, search, details, saved titles, viewing history, downloads and settings. Version 7.0.5-celium (76).
 
