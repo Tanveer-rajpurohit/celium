@@ -1,0 +1,374 @@
+{
+  "reviewedOn": "2026-11-05",
+  "scope": "Partial direct HTTP retrieval log; web and GitHub connector research linked in PROVIDER_TERMS_AUDIT.md is not included. Hashes are of retrieved response content, not proof of rights or permanent page archives.",
+  "requests": [
+    {
+      "requested": "https://moviesmod.tw/",
+      "checked": "2026-11-05T09:17:31.065859+00:00",
+      "status": 200,
+      "final": "https://moviesmod.tw/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "298a3567838bd8b9a1f61a44b343e083a44ad8744e3a7717cd17ad22af483179",
+      "title": "MoviesMod | Movies Mod 2025, MoviesMod Official, MoviesMod.tw"
+    },
+    {
+      "requested": "https://anikototv.to/",
+      "checked": "2026-11-05T09:17:31.065859+00:00",
+      "status": 200,
+      "final": "https://anikototv.to/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "0ef855a55ba7f947b6e1d1c6fc8db82a9873bae55d811acaeaa5b32ba0ab96bf",
+      "title": "Anikoto - Watch Anime Online, Free Anime Streaming"
+    },
+    {
+      "requested": "https://animedekho.tv/",
+      "checked": "2026-11-05T09:17:31.065859+00:00",
+      "status": 200,
+      "final": "https://animedekho.tv/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "1ec64685abf640e896944ddc12374c9b5976f8c98d20a8cc9eda0b81788eb870",
+      "title": "AnimeDekho - Watch Online Cartoons Anime in Hindi Tamil Telugu Dubbed"
+    },
+    {
+      "requested": "https://hianime.at/",
+      "checked": "2026-11-05T09:17:31.065859+00:00",
+      "status": 200,
+      "final": "https://hianime.at/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "41b52fef13e48f5a69480c47660f210af9fba4e0464b1b2cb8d2746b34cda3af",
+      "title": "HiAnime \u2013 Watch Free HD Anime Online with Sub and Dub"
+    },
+    {
+      "requested": "https://allmanga.to/",
+      "checked": "2026-11-05T09:17:31.065859+00:00",
+      "status": 200,
+      "final": "https://allmanga.to/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "ca9b496d1b8e26e82638087f167f5ef27502f9cb4250164948ba9eba17655d9d",
+      "title": "All Manga"
+    },
+    {
+      "requested": "https://beeg.com/",
+      "checked": "2026-11-05T09:17:31.704394+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://www.pornhat.com/",
+      "checked": "2026-11-05T09:17:31.712875+00:00",
+      "status": 200,
+      "final": "https://www.pornhat.com/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "44e7367564cab1a66b126b28bdc32f2ab2d1662b7d2695808ec20f82405d5d11",
+      "title": "PornHat - we \u2764\ufe0f HD free porn videos!"
+    },
+    {
+      "requested": "https://www.freepornvideos.xxx/",
+      "checked": "2026-11-05T09:17:31.849770+00:00",
+      "status": 200,
+      "final": "https://www.freepornvideos.xxx/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "770139446604d51f4e1e71c60ea5e242962bb18f96229eeb411c5678a167d4dd",
+      "title": "Free Porn Videos in 4K HD \u2b50\ufe0f Full Length!"
+    },
+    {
+      "requested": "https://www.pornhub.com/information/terms",
+      "checked": "2026-11-05T09:17:31.871690+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://fapgoat.com/",
+      "checked": "2026-11-05T09:17:31.917311+00:00",
+      "status": 200,
+      "final": "https://fapgoat.com/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "805ee791902cfbf4dd431f3b139658a4c1c37c433d3b001c5609d894adc86a80",
+      "title": "FapGoat \u2013 Free HD Porn: MILF, Stepmom & More"
+    },
+    {
+      "requested": "https://hqporner.com/",
+      "checked": "2026-11-05T09:17:32.386243+00:00",
+      "status": 200,
+      "final": "https://hqporner.com/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "8c9517ad14184749a15f44273a896efa8f9157e21561334d407ddff68fc6963f",
+      "title": "HD Porn Videos Tube, Thousands of High Definition Porn Videos"
+    },
+    {
+      "requested": "https://www.porn00.org/",
+      "checked": "2026-11-05T09:17:32.635774+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://xhamster2.com/terms",
+      "checked": "2026-11-05T09:17:32.839202+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://www.xvideos.com/",
+      "checked": "2026-11-05T09:17:33.250143+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://youperv.com/",
+      "checked": "2026-11-05T09:17:46.779261+00:00",
+      "status": 200,
+      "final": "https://youperv.com/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "de4be2d0dec84d00c263e9961307b9c2f1692f1fb358dd529611a730082b157f",
+      "title": "free porn videos, sex movies xxx, hot porn tube YouPerv"
+    },
+    {
+      "requested": "https://fxpornhd.com/",
+      "checked": "2026-11-05T09:17:46.930148+00:00",
+      "status": 200,
+      "final": "https://fxpornhd.com/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "ecd5e2aaa407973025af14c927b0046cf79a898fedccdee9eb46f72dfef5176f",
+      "title": "Free Porn, Sex, Tube Videos, Pussy in Porno Movies \u2013 Fxpornhd"
+    },
+    {
+      "requested": "https://www.txnhh.com/",
+      "checked": "2026-11-05T09:17:47.271325+00:00",
+      "status": 200,
+      "final": "https://www.txnhh.com/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "daeb341d076c6847f6f7e6034b9523cce300688b644c330defe9034283d86770",
+      "title": "Free Porn, Sex, Tube Videos, XXX Pics, Pussy in Porno Movies - XNXX.COM"
+    },
+    {
+      "requested": "https://porngameshub.com/",
+      "checked": "2026-11-05T09:17:47.517983+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://moviebox.ph/",
+      "checked": "2026-11-05T09:17:47.668001+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://m1.multimovies.courses/",
+      "checked": "2026-11-05T09:17:47.747656+00:00",
+      "status": 200,
+      "final": "https://m1.multimovies.courses/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "cafd97002a6ba5f6ba2606736f111cc05fc88a4dd875f0e447317f22a6d3aaa6",
+      "title": "MultiMovies - Watch Movies, TV Series and Anime Online Free"
+    },
+    {
+      "requested": "https://new10.hdhub4u.cl/",
+      "checked": "2026-11-05T09:17:47.873465+00:00",
+      "status": 200,
+      "final": "https://new11.hdhub4u.cl/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "7ae484e0de4ac2c29f2ad9459c2d53a393f7ba9b515117b3cdb393970478aa3a",
+      "title": "HDHub4u Official \u2013 Download HD Movies & TV Shows"
+    },
+    {
+      "requested": "https://cncverse.pages.dev/",
+      "checked": "2026-11-05T09:17:48.275215+00:00",
+      "status": 200,
+      "final": "https://cncverse.pages.dev/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "7e9992c46b92532dea9284923952a7922cde0958e6fba427a9d02799a10404b7",
+      "title": "Monthly Support Goal \u2014 CNCverse Community"
+    },
+    {
+      "requested": "https://moviesmod.tw/dmca/",
+      "checked": "2026-11-05T09:19:01.780852+00:00",
+      "status": 200,
+      "final": "https://moviesmod.tw/dmca/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "8da4ced1a809e15e19017125fc957aa65825088c6e4caafb4287fb4202ee6377",
+      "title": "DMCA - MoviesMod | Movies Mod 2025, MoviesMod Official, MoviesMod.tw"
+    },
+    {
+      "requested": "https://moviesmod.tw/site-disclaimer/",
+      "checked": "2026-11-05T09:19:01.784942+00:00",
+      "status": 200,
+      "final": "https://moviesmod.tw/site-disclaimer/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "b2c558122a5338e675b887752b6fcd7f8869f57edb26821484befeff402fc2e2",
+      "title": "Site Disclaimer - MoviesMod | Movies Mod 2025, MoviesMod Official, MoviesMod.tw"
+    },
+    {
+      "requested": "https://www.pornhat.com/terms/",
+      "checked": "2026-11-05T09:19:01.784942+00:00",
+      "status": 200,
+      "final": "https://www.pornhat.com/terms/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "46e525dd53518f66464b6d0711cf3b2771b612823242cff7b8d8e577b8674a37",
+      "title": "Terms & Conditions - PornHat"
+    },
+    {
+      "requested": "https://www.pornhat.com/dmca/",
+      "checked": "2026-11-05T09:19:01.784942+00:00",
+      "status": 200,
+      "final": "https://www.pornhat.com/dmca/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "0143a4698178042feb03e67c6982f84650bc6c04472aacd0de77d0a13598c70a",
+      "title": "DMCA Notice of Copyright Infringement - PornHat"
+    },
+    {
+      "requested": "https://www.freepornvideos.xxx/terms/",
+      "checked": "2026-11-05T09:19:01.784942+00:00",
+      "status": 200,
+      "final": "https://www.freepornvideos.xxx/terms/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "ce442e65604163414a94d1b7cf4b931450c43397ab322ea31926ae0708932c61",
+      "title": "Terms of Service Page - FreePornVideos.XXX"
+    },
+    {
+      "requested": "https://www.freepornvideos.xxx/dmca/",
+      "checked": "2026-11-05T09:19:02.348947+00:00",
+      "status": 200,
+      "final": "https://www.freepornvideos.xxx/dmca/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "ab91bdf78f31dc14c49037c6211faa9696266448252c6576e90908c435e63b82",
+      "title": "DMCA Page - FreePornVideos.XXX"
+    },
+    {
+      "requested": "https://fapgoat.com/terms/",
+      "checked": "2026-11-05T09:19:02.394725+00:00",
+      "status": 200,
+      "final": "https://fapgoat.com/terms/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "871f9724f9960d51d028812f231cdfdbf5f38b6d3c5a5643acfc0080418f374d",
+      "title": "Terms & Conditions | FapGoat"
+    },
+    {
+      "requested": "https://fapgoat.com/dmca/",
+      "checked": "2026-11-05T09:19:02.468841+00:00",
+      "status": 200,
+      "final": "https://fapgoat.com/dmca/",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "91dcdeab2225f64e8c094e347b59f86ec6a29a04041c78b1d3161d28fa4adbaf",
+      "title": "DMCA Notice of Copyright Infringement | FapGoat"
+    },
+    {
+      "requested": "https://hqporner.com/terms-of-use.php",
+      "checked": "2026-11-05T09:19:02.488656+00:00",
+      "status": 200,
+      "final": "https://hqporner.com/terms-of-use.php",
+      "content_type": "text/html; charset=utf-8",
+      "truncated": false,
+      "sha256": "b3267c2a0097493e2d370a600db6eebdfb3b95fa45adf837645458a06caeb745",
+      "title": "Terms and Conditions - HQporner.com"
+    },
+    {
+      "requested": "https://fxpornhd.com/dmca/",
+      "checked": "2026-11-05T09:19:02.721225+00:00",
+      "status": 200,
+      "final": "https://fxpornhd.com/dmca/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "fff50a0fb3d5d4b1529a4bad74c4379aa3844c5765572bad3e94f0b8769b042d",
+      "title": "DMCA \u2013 Free Porn, Sex, Tube Videos, Pussy in Porno Movies"
+    },
+    {
+      "requested": "https://fxpornhd.com/terms-of-use/",
+      "checked": "2026-11-05T09:19:02.928869+00:00",
+      "status": 200,
+      "final": "https://fxpornhd.com/terms-of-use/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "dc1bf51a5e0517193f58848613013a85de6e3fe0835706c0afa15a0923a75400",
+      "title": "Terms of Use \u2013 Free Porn, Sex, Tube Videos, Pussy in Porno Movies"
+    },
+    {
+      "requested": "https://info.xnxx.com/legal/tos",
+      "checked": "2026-11-05T09:19:02.942041+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://m1.multimovies.courses/disclaimer",
+      "checked": "2026-11-05T09:19:02.959621+00:00",
+      "status": 200,
+      "final": "https://m1.multimovies.courses/disclaimer",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "30b0d6200a21e51651a412373400cbf7f79111aa373e6b345419d89ebe2e5da8",
+      "title": "Disclaimer \u00b7 MultiMovies"
+    },
+    {
+      "requested": "https://m1.multimovies.courses/dmca",
+      "checked": "2026-11-05T09:19:03.009973+00:00",
+      "status": 200,
+      "final": "https://m1.multimovies.courses/dmca",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "acd2c2e02d18d318cdd5776b526302643c59c7ddee96fe478dbb7d11b8d9ed5e",
+      "title": "DMCA \u00b7 MultiMovies"
+    },
+    {
+      "requested": "https://new11.hdhub4u.cl/disclaimer/",
+      "checked": "2026-11-05T09:19:03.142014+00:00",
+      "status": 200,
+      "final": "https://new11.hdhub4u.cl/disclaimer/",
+      "content_type": "text/html; charset=UTF-8",
+      "truncated": false,
+      "sha256": "d917446853d7272738e0ae4a70af5abae39f158ca6de59c766b00bac862014b0",
+      "title": "Disclaimer \u2013 HDHub4u Official"
+    },
+    {
+      "requested": "https://info.xvideos.net/legal/tos/",
+      "checked": "2026-11-05T09:19:03.352757+00:00",
+      "error": "<urlopen error [WinError 10054] An existing connection was forcibly closed by the remote host>",
+      "status": null
+    },
+    {
+      "requested": "https://xhamster.com/terms",
+      "checked": "2026-11-05T09:19:03.671232+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://beeg.com/terms",
+      "checked": "2026-11-05T09:19:03.991894+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://porngameshub.com/terms",
+      "checked": "2026-11-05T09:19:04.171887+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    },
+    {
+      "requested": "https://moviebox.ph/terms",
+      "checked": "2026-11-05T09:19:04.218216+00:00",
+      "error": "<urlopen error timed out>",
+      "status": null
+    }
+  ]
+}
