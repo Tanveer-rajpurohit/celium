@@ -163,6 +163,8 @@ class CeliumDetailsFragment : BaseComposeFragment() {
                     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         CeliumBackButton({ findNavController().popBackStack() })
                         Text("Details", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        com.lagradost.cloudstream3.cast.MirrorScreenButton()
+                        com.lagradost.cloudstream3.cast.CastButton()
                         CeliumRefreshButton(onClick = { load(true) }, enabled = !refreshing)
                     }
                     if (refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -268,6 +270,7 @@ class CeliumDetailsFragment : BaseComposeFragment() {
                             CeliumEmpty("Loading details", "Getting the title and available episodes from the selected source.")
                         }
                     }
+                    com.lagradost.cloudstream3.cast.CastOverlay()
                 }
                 if (resolving) AlertDialog(onDismissRequest = { model.cancelLinks() },
                     title = { Text(if (resolvingDownload) "Finding download sources" else "Preparing playback") },

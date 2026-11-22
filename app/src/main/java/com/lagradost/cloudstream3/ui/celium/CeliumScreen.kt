@@ -103,6 +103,8 @@ fun CeliumScreen(
                             Text(state.source.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(" ▾")
                         }
+                        if (!searchMode) com.lagradost.cloudstream3.cast.MirrorScreenButton()
+                        if (!searchMode) com.lagradost.cloudstream3.cast.CastButton()
                         if (!searchMode) IconButton(onClick = onRefresh, enabled = !state.busy) {
                             Icon(painterResource(R.drawable.ic_refresh), "Refresh feed", Modifier.size(22.dp))
                         }
@@ -347,6 +349,7 @@ fun CeliumScreen(
                             },
                     )
                 }
+                com.lagradost.cloudstream3.cast.CastOverlay(Modifier.align(Alignment.BottomCenter))
                 val shelf = state.shelves.firstOrNull { it.key == collectionKey }
                 if (shelf != null) {
                     androidx.activity.compose.BackHandler { collectionKey = null }

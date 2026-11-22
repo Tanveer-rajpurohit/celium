@@ -88,6 +88,7 @@ import com.lagradost.cloudstream3.utils.AppContextUtils.setDefaultFocus
 import com.lagradost.cloudstream3.utils.AppContextUtils.sortSubs
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.CastHelper.startCast
+import com.lagradost.cloudstream3.cast.CastSession
 import com.lagradost.cloudstream3.utils.Coroutines.ioSafe
 import com.lagradost.cloudstream3.utils.Coroutines.ioWork
 import com.lagradost.cloudstream3.utils.Coroutines.ioWorkSafe
@@ -1549,6 +1550,26 @@ class ResultViewModel2 : ViewModel() {
             }
 
             ACTION_PLAY_EPISODE_IN_PLAYER -> {
+                // Connected to a TV: every Play goes to the TV instead of the in-app player.
+                if (CastSession.isConnected && currentResponse?.type != TvType.CustomMedia) {
+                    val dub = currentIndex?.dubStatus
+                    val queue = currentEpisodes.entries
+                        .filter { dub == null || it.key.dubStatus == dub }
+                        .sortedBy { it.key.season }
+                        .flatMap { it.value }
+                        .ifEmpty { listOf(click.data) }
+                    val index = queue.indexOfFirst { it.id == click.data.id }
+                    val (episodes, start) = if (index >= 0) queue to index else listOf(click.data) to 0
+                    CastSession.play(
+                        click.data.apiName,
+                        currentResponse?.name ?: click.data.headerName,
+                        currentResponse?.posterUrl,
+                        episodes,
+                        start,
+                        click.data.getRealPosition()
+                    )
+                    return
+                }
                 val list = HashMap<String, String>(currentResponse?.syncData ?: emptyMap())
                 val generator = generator ?: return
 
