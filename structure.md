@@ -1,6 +1,6 @@
 # Celium repository structure
 
-Android and desktop live in this repository. Website development is deferred. Each app owns its platform code; reusable Kotlin code stays in the existing shared modules. Keep the current Gradle module paths so Android builds and releases continue to work.
+Android and desktop live in this repository. Native Windows desktop is the current development focus; website development is deferred. Each app owns its platform code; reusable Kotlin code stays in the existing shared modules. Keep the current Gradle module paths so Android builds and releases continue to work.
 
 ```text
 celium/
@@ -43,7 +43,7 @@ celium/
 ## Current platform status
 
 - **Android:** existing app and APK release tooling.
-- **Desktop:** existing Compose/JVM demo entry point, not a finished Celium desktop client. Its Gradle configuration declares Windows, macOS, and Linux installer formats; those are not verified releases.
+- **Desktop:** Windows prototype with Moviesmod source adaptation, search/details/episodes/source selection, and VLC playback integration. Live extraction and visible playback remain subject to the [implementation status](docs/desktop/IMPLEMENTATION.md). Other operating-system installer formats remain unverified.
 - **Website:** deferred; no website application, hosting, or deployment is configured. Existing web source directories in the library are inherited and are not a website app.
 - **Apple native app:** not configured.
 

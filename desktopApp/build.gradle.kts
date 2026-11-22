@@ -20,7 +20,14 @@ kotlin {
             }
             implementation(project(":shared"))
             implementation(project(":library"))
+            implementation(libs.json)
+            implementation(libs.nicehttp)
+            implementation(libs.jsoup)
+            implementation(libs.jackson.module.kotlin)
+            implementation("uk.co.caprica:vlcj:4.12.1")
+            implementation("com.microsoft.playwright:playwright:1.56.0")
         }
+        jvmTest.dependencies { implementation(libs.junit) }
     }
 }
 
@@ -29,15 +36,19 @@ tasks.withType<JavaExec> {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
+tasks.withType<Test>().configureEach {
+    inputs.property("liveMoviesmod", providers.environmentVariable("CELIUM_LIVE_TESTS").orElse("false"))
+}
+
 compose.desktop {
     application {
         mainClass = "com.lagradost.cloudstream4.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Celium"
-            packageVersion = "1.0.0"
+            packageVersion = "0.1.0"
 
-            val iconsRoot = project.file("desktop-icons")
+            val iconsRoot = project.file("src/desktop-icons")
             macOS {
                 // iconFile.set(iconsRoot.resolve("icon-mac.icns"))
             }

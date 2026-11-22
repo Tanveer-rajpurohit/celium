@@ -23,7 +23,11 @@ Celium opens on Home, a combined Movies and TV Shows feed with a featured carous
 - Sources: PikaShow and NetMirror Mobile removed; CNC Verse (Netflix · Prime · Disney+), MovieBox and CineStream added.
 - New Celium app icon.
 
-## Windows
+## Desktop (Windows prototype)
+
+Read the [native desktop guide](desktopApp/README.md) for the Moviesmod prototype, prerequisites, and current verification limits.
+
+## Android emulator on Windows
 Read [Windows starter instructions](windows/README.md). An existing Android SDK, emulator and AVD are required. Android .cs3 extensions are not native Windows plugins.
 
 ## Build
