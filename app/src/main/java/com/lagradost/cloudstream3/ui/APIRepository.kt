@@ -244,7 +244,9 @@ class APIRepository(val api: MainAPI) {
         if (isInvalidData(data)) return false // this makes providers cleaner
         return try {
             withTimeout(getTimeout(api.loadLinksTimeoutMs)) {
-                api.loadLinks(data, isCasting, subtitleCallback, callback)
+                api.loadLinks(data, isCasting, subtitleCallback) { link ->
+                    if (!CeliumLinkFilter.isBlocked(link.source, link.name)) callback(link)
+                }
             }
         } catch (throwable: Throwable) {
             logError(throwable)
