@@ -205,10 +205,8 @@ class CeliumViewModel : ViewModel() {
         val home = getKey<Boolean>("celium_home") ?: true
         val section = if (home) CeliumSection.Movies
             else CeliumSection.entries.firstOrNull { it.name == getKey<String>("celium_section") } ?: CeliumSection.Movies
-        val savedHomeSourceId = getKey<String>("celium_source_home")
-        _state.value = CeliumState(home = home, section = section,
-            source = if (home) CeliumSources.selected(CeliumSection.Movies, savedHomeSourceId)
-                else CeliumSources.selected(section, getKey("celium_source_${section.name}")))
+        // Every view opens on its Celium Feed; a provider picked from the chips lasts only for that visit.
+        _state.value = CeliumState(home = home, section = section, source = CeliumSources.selected(section, null))
         // Subscribed for the view model's whole lifetime, not only while a fragment is started (16.4).
         CeliumSources.ready += ::sourcePolicyChanged
         MainActivity.afterPluginsLoadedEvent += ::pluginsLoaded
@@ -315,7 +313,7 @@ class CeliumViewModel : ViewModel() {
         if (adult) adultDiscarded = false else discardAdult()
         if (!adult && (_state.value.section == CeliumSection.Adult || _state.value.section == CeliumSection.AdultGames)) {
             _state.value = _state.value.copy(shelves = emptyList(), results = emptyList(), resume = emptyList())
-            select(CeliumSection.Movies, CeliumSources.selected(CeliumSection.Movies, getKey("celium_source_${CeliumSection.Movies.name}")))
+            select(CeliumSection.Movies, CeliumSources.selected(CeliumSection.Movies, null))
             return true
         }
         val current = _state.value
@@ -374,19 +372,20 @@ class CeliumViewModel : ViewModel() {
         if (pendingQuery.isNotBlank()) query(pendingQuery)
     }
 
-    /** Opens a Section view; this always leaves Home. */
+    /**
+     * Opens a Section view; this always leaves Home. It opens on the Celium Feed every time, so
+     * moving between Home, Movies, TV Shows and Anime always shows the same kind of feed.
+     */
     fun selectSection(section: CeliumSection) {
         if ((section == CeliumSection.Adult || section == CeliumSection.AdultGames) && !MainAPI.settingsForProvider.enableAdult) return
         if (!_state.value.home && section == _state.value.section) return
-        select(section, CeliumSources.selected(section, getKey("celium_source_${section.name}")), home = false)
+        select(section, CeliumSources.selected(section, null), home = false)
     }
 
     /** Opens Home: the Movies/TV Celium Feed with Movies and TV Shows combined (3.1, 15.5). */
     fun selectHome() {
         if (_state.value.home) return
-        val savedHomeSourceId = getKey<String>("celium_source_home")
-        val source = CeliumSources.selected(CeliumSection.Movies, savedHomeSourceId)
-        select(CeliumSection.Movies, source, home = true)
+        select(CeliumSection.Movies, CeliumSources.selected(CeliumSection.Movies, null), home = true)
     }
 
     /** Picking an individual provider from Home opens that provider's Movies view. */
@@ -414,8 +413,6 @@ class CeliumViewModel : ViewModel() {
         val pendingQuery = previous.query.takeIf { previous.section == section && previous.home == home }.orEmpty()
         setKey("celium_home", home)
         setKey("celium_section", section.name)
-        if (!home) setKey("celium_source_${section.name}", source.id)
-        else setKey("celium_source_home", source.id)
         cancelJobs()
         boundApi = null
         feedSignature = ""
