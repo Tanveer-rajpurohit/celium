@@ -69,12 +69,15 @@ jobs:
           # Installed apps only accept updates signed with the same key. Stop here if this isn't the
           # Celium release key (see docs/CELIUM_UPDATES.md), instead of publishing an APK nobody can update to.
           EXPECTED_CERT=8d4291e8273191a5f04b1204e1bd73a9594f42db7c97886555c0a8bae88fe623
-          ACTUAL_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs app/build/outputs/apk/stable/release/*.apk \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          if [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
-            echo "::error::The APK is signed with certificate $ACTUAL_CERT, not the Celium release key $EXPECTED_CERT. Users couldn't install it as an update."
+          CERTS="$("$BUILD_TOOLS/apksigner" verify --print-certs app/build/outputs/apk/stable/release/*.apk)"
+          # The line's wording varies between build-tools versions ("Signer #1 certificate SHA-256 digest: ...",
+          # "Signer (minSdkVersion=...) certificate SHA-256 digest: ..."): match any certificate digest.
+          if ! printf '%s\n' "$CERTS" | grep -qi "certificate SHA-256 digest: *$EXPECTED_CERT"; then
+            echo "::error::The APK isn't signed with the Celium release key $EXPECTED_CERT. Users couldn't install it as an update."
+            printf '%s\n' "$CERTS"
             exit 1
           fi
+          echo "Signed with the Celium release key."
           python3 scripts/prepare_release.py \
             --metadata app/build/outputs/apk/stable/release/output-metadata.json \
             --output build/celium-release --tag "$RELEASE_TAG" \
