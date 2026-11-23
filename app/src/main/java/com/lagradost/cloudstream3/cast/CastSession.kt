@@ -518,20 +518,26 @@ object CastSession {
         val position = _state.value.nowPlaying?.positionMs ?: 0
         monitorJob?.cancel(); switchJob?.cancel()
         switchJob = scope.launch {
-            publish(m) { copy(message = finding, notice = null) }
-            for (link in candidates) {
-                if (previous != null && link.url == previous.url && m.current?.url == previous.url) {
-                    publish(m) { copy(loading = false, message = null) }
-                    monitor(m, r)
-                    return@launch
+            // The user is waiting for the new source: find links at full speed until something plays again.
+            linkSpeed(fast = true)
+            try {
+                publish(m) { copy(message = finding, notice = null) }
+                for (link in candidates) {
+                    if (previous != null && link.url == previous.url && m.current?.url == previous.url) {
+                        publish(m) { copy(loading = false, message = null) }
+                        monitor(m, r)
+                        return@launch
+                    }
+                    if (attempt(m, link, position, check = true)) return@launch
                 }
-                if (attempt(m, link, position, check = true)) return@launch
+                when {
+                    previous != null && m.current == null -> attempt(m, previous, position, check = false)
+                    m.current != null -> { publish(m) { copy(loading = false, message = null) }; monitor(m, r) }
+                }
+                onNone()
+            } finally {
+                linkSpeed(fast = m.current == null)
             }
-            when {
-                previous != null && m.current == null -> attempt(m, previous, position, check = false)
-                m.current != null -> { publish(m) { copy(loading = false, message = null) }; monitor(m, r) }
-            }
-            onNone()
         }
     }
 
