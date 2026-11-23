@@ -57,7 +57,7 @@ class GithubViewModelTest {
         }
     }
 
-    @Test fun `daily automatic check is throttled but manual check bypasses interval`() = runBlocking<Unit> {
+    @Test fun `automatic check runs on every app start`() = runBlocking<Unit> {
         val settings = AppSettings(InMemoryPreferenceStore())
         val releases = Releases()
         val model = viewModel(settings, releases)
@@ -65,8 +65,9 @@ class GithubViewModelTest {
         withTimeout(5000) { releases.calls.receive() }
         withTimeout(5000) { model.state.first { it.dialog?.state is GithubUpdateDialogState.UpdateFound } }
         assertEquals(now, settings.updates.lastAppUpdateCheck.get())
+        // The next launch, even minutes later, checks again (no daily limit).
         model.onAction(GithubAction.AutoSearchForUpdate)
-        assertTrue(releases.calls.tryReceive().isFailure)
+        withTimeout(5000) { releases.calls.receive() }
         model.onAction(GithubAction.SearchForUpdate)
         withTimeout(5000) { releases.calls.receive() }
         withTimeout(5000) { model.state.first { it.dialog?.isFromUser == true && it.dialog?.state is GithubUpdateDialogState.UpdateFound } }
@@ -94,8 +95,8 @@ class GithubViewModelTest {
         withTimeout(5000) { model.state.first { it.dialog?.state is GithubUpdateDialogState.UpdateFound } }
     }
 
-    @Test fun `checks again after a day or if device clock moves backwards`() = runBlocking<Unit> {
-        for (lastCheck in listOf(now - 86_400_000L, now + 1000L)) {
+    @Test fun `checks regardless of when the last check was`() = runBlocking<Unit> {
+        for (lastCheck in listOf(now - 60_000L, now - 86_400_000L, now + 1000L)) {
             val settings = AppSettings(InMemoryPreferenceStore())
             settings.updates.lastAppUpdateCheck.set(lastCheck)
             val model = viewModel(settings, Releases())

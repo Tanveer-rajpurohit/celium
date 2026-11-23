@@ -40,7 +40,6 @@ import com.lagradost.cloudstream4.viewmodels.GithubAction
 import com.lagradost.cloudstream4.viewmodels.GithubAction.AutoSearchForUpdate
 import com.lagradost.cloudstream4.viewmodels.GithubAction.Dismiss
 import com.lagradost.cloudstream4.viewmodels.GithubAction.SearchForUpdate
-import com.lagradost.cloudstream4.viewmodels.GithubAction.SkipUpdate
 import com.lagradost.cloudstream4.viewmodels.GithubAction.Update
 import com.lagradost.cloudstream4.viewmodels.GithubState
 import com.lagradost.cloudstream4.viewmodels.GithubUpdateDialogState
@@ -174,11 +173,8 @@ object MainActivityScreen : Screen {
                     })
                 }
                 dismissButton = {
-                    BlackButton(text = stringResource(R.string.skip_update), onClick = {
-                        onAction(SkipUpdate(state.file))
-                        onAction(Dismiss)
-                    })
-                    BlackButton(text = stringResource(R.string.cancel), onClick = {
+                    // "Later" only closes the dialog: it shows again the next time Celium opens.
+                    BlackButton(text = "Later", onClick = {
                         onAction(Dismiss)
                     })
                 }

@@ -189,12 +189,10 @@ class GithubViewModel(
             }
 
             GithubAction.AutoSearchForUpdate -> {
-                val now = currentTimeMillis()
-                val lastCheck = settings.updates.lastAppUpdateCheck.get()
-                if (settings.updates.showAppUpdates.get() &&
-                    (lastCheck == 0L || now < lastCheck || now - lastCheck >= 24 * 60 * 60 * 1000L)
-                ) {
-                    settings.updates.lastAppUpdateCheck.set(now)
+                // Every app start (the caller runs this once per launch): users hear about an update
+                // the next time they open Celium. One small request to GitHub's release list.
+                if (settings.updates.showAppUpdates.get()) {
+                    settings.updates.lastAppUpdateCheck.set(currentTimeMillis())
                     ioSafe {
                         searchForUpdate(prerelease = isPrerelease, fromUser = false)
                     }
