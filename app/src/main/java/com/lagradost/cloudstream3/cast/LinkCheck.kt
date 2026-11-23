@@ -20,6 +20,48 @@ object LinkCheck {
         return builder
     }
 
+    /**
+     * Length of an HLS video, worked out from its playlist (some TVs report 0 for HLS).
+     * Follows a master playlist to its first variant. Null when unknown, e.g. a live stream. Blocking.
+     */
+    fun hlsDuration(client: OkHttpClient, url: String, headers: Map<String, String>): Long? {
+        val quick = client.newBuilder().callTimeout(15, TimeUnit.SECONDS).build()
+        @Suppress("UNNECESSARY_SAFE_CALL")
+        fun fetch(u: String): String? = runCatching {
+            quick.newCall(request(u, headers).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+        }.getOrNull()
+        var playlistUrl = url
+        var body = fetch(url) ?: return null
+        HlsRewriter.firstVariant(body, playlistUrl)?.let { variant ->
+            playlistUrl = variant
+            body = fetch(variant) ?: return null
+        }
+        return HlsRewriter.duration(body)
+    }
+
+    /**
+     * True when a TV could fetch this video itself: it plays without the source's Referer/headers.
+     * Then the phone doesn't have to relay the whole video. For HLS the first segment is checked too,
+     * and encrypted streams always go through the relay (their keys often need headers). Blocking.
+     */
+    fun worksDirect(client: OkHttpClient, url: String, playlist: Boolean): Boolean {
+        if (!playlist) return check(client, url, emptyMap(), false) == null
+        val quick = client.newBuilder().callTimeout(10, TimeUnit.SECONDS).build()
+        @Suppress("UNNECESSARY_SAFE_CALL")
+        fun fetch(u: String): String? = runCatching {
+            quick.newCall(request(u, emptyMap()).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+        }.getOrNull()
+        var playlistUrl = url
+        var body = fetch(url)?.takeIf(HlsRewriter::isPlaylistBody) ?: return false
+        HlsRewriter.firstVariant(body, playlistUrl)?.let { variant ->
+            playlistUrl = variant
+            body = fetch(variant)?.takeIf(HlsRewriter::isPlaylistBody) ?: return false
+        }
+        if (HlsRewriter.isEncrypted(body)) return false
+        val segment = HlsRewriter.firstSegment(body, playlistUrl) ?: return false
+        return check(client, segment, emptyMap(), false) == null
+    }
+
     /** A plain-language problem, or null when the link responds with video (or a playlist). */
     fun check(client: OkHttpClient, url: String, headers: Map<String, String>, playlist: Boolean): String? {
         val request = request(url, headers).apply { if (!playlist) header("Range", "bytes=0-1023") }.build()

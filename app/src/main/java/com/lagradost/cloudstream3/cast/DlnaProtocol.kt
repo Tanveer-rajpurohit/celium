@@ -68,18 +68,22 @@ object DlnaProtocol {
     /** DIDL-Lite item metadata. Returned unescaped; [soapEnvelope] escapes it as an argument. */
     fun didl(title: String, url: String, mime: String, subtitleUrl: String? = null): String {
         val protocol = "http-get:*:$mime:${dlnaFlags(mime)}"
+        // Samsung TVs read subtitles from sec:CaptionInfoEx.
         val sub = subtitleUrl?.let {
             "<sec:CaptionInfoEx sec:type=\"srt\">${escape(it)}</sec:CaptionInfoEx>"
         }.orEmpty()
+        // LG and Sony TVs read them from PacketVideo attributes on the video resource.
+        val pv = subtitleUrl?.let { " pv:subtitleFileUri=\"${escape(it)}\" pv:subtitleFileType=\"srt\"" }.orEmpty()
         return "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" " +
             "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" " +
             "xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" " +
-            "xmlns:sec=\"http://www.sec.co.kr/\">" +
+            "xmlns:sec=\"http://www.sec.co.kr/\" " +
+            "xmlns:pv=\"http://www.pv.com/pvns/\">" +
             "<item id=\"0\" parentID=\"-1\" restricted=\"1\">" +
             "<dc:title>${escape(title)}</dc:title>" +
             "<upnp:class>object.item.videoItem</upnp:class>" +
             sub +
-            "<res protocolInfo=\"${escape(protocol)}\">${escape(url)}</res>" +
+            "<res protocolInfo=\"${escape(protocol)}\"$pv>${escape(url)}</res>" +
             // Kodi and many renderers pick subtitles up from an extra text/srt resource.
             (subtitleUrl?.let { "<res protocolInfo=\"http-get:*:text/srt:*\">${escape(it)}</res>" }.orEmpty()) +
             "</item></DIDL-Lite>"

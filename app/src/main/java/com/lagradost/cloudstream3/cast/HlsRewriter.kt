@@ -32,6 +32,34 @@ object HlsRewriter {
         }
     }
 
+    /** Length of a finished (VOD) media playlist: the sum of its segment durations. Null for live or master playlists. */
+    fun duration(playlist: String): Long? {
+        if (!playlist.contains("#EXT-X-ENDLIST")) return null
+        val segments = Regex("""#EXTINF:\s*([0-9.]+)""").findAll(playlist).mapNotNull { it.groupValues[1].toDoubleOrNull() }.toList()
+        if (segments.isEmpty()) return null
+        return (segments.sum() * 1000).toLong()
+    }
+
+    /** First variant (media playlist) of a master playlist, resolved against [playlistUrl]; null if it isn't a master. */
+    fun firstVariant(playlist: String, playlistUrl: String): String? {
+        val lines = playlist.lineSequence().map { it.trim() }.toList()
+        val index = lines.indexOfFirst { it.startsWith("#EXT-X-STREAM-INF") }
+        if (index < 0) return null
+        return lines.drop(index + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") }?.let { resolve(playlistUrl, it) }
+    }
+
+    /** First media segment of a media playlist, resolved against [playlistUrl]. */
+    fun firstSegment(playlist: String, playlistUrl: String): String? {
+        val lines = playlist.lineSequence().map { it.trim() }.toList()
+        val index = lines.indexOfFirst { it.startsWith("#EXTINF") }
+        if (index < 0) return null
+        return lines.drop(index + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") }?.let { resolve(playlistUrl, it) }
+    }
+
+    /** True when segments are encrypted (an EXT-X-KEY other than METHOD=NONE). */
+    fun isEncrypted(playlist: String): Boolean =
+        playlist.lineSequence().any { it.startsWith("#EXT-X-KEY") && !it.contains("METHOD=NONE") }
+
     fun isPlaylistUrl(url: String): Boolean =
         runCatching { URI(url).path }.getOrNull().orEmpty().lowercase().endsWith(".m3u8")
 

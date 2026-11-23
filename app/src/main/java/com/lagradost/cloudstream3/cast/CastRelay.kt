@@ -117,6 +117,10 @@ class CastRelay(baseClient: OkHttpClient) {
             val clientHeaders = lines.drop(1).mapNotNull { line ->
                 val i = line.indexOf(':'); if (i <= 0) null else line.substring(0, i).trim().lowercase() to line.substring(i + 1).trim()
             }.toMap()
+            // Chromecast's player is a web page: it checks permission (CORS) before fetching playlists and subtitles.
+            if (method == "OPTIONS") {
+                respond(out, "204 No Content", mapOf("Content-Length" to "0")); out.flush(); return
+            }
             val entry = path.removePrefix("/s/").substringBefore('/').let(entries::get)
             if (entry == null || (method != "GET" && method != "HEAD")) {
                 respond(out, "404 Not Found", mapOf("Content-Length" to "0")); out.flush(); return
@@ -161,9 +165,13 @@ class CastRelay(baseClient: OkHttpClient) {
             }
             val upstreamType = response.header("Content-Type").orEmpty()
             if (entry.subtitle) {
-                val srt = CastLinks.vttToSrt(body.string()).toByteArray()
-                respond(out, "200 OK", mapOf("Content-Type" to "text/srt; charset=utf-8", "Content-Length" to srt.size.toString()))
-                if (!head) out.write(srt)
+                // DLNA TVs read SRT; Chromecast reads WebVTT.
+                val vtt = entry.mime == "text/vtt"
+                val text = body.string()
+                val bytes = (if (vtt) CastLinks.srtToVtt(text) else CastLinks.vttToSrt(text)).toByteArray()
+                val type = if (vtt) "text/vtt; charset=utf-8" else "text/srt; charset=utf-8"
+                respond(out, "200 OK", mapOf("Content-Type" to type, "Content-Length" to bytes.size.toString()))
+                if (!head) out.write(bytes)
                 out.flush(); return
             }
             if (entry.playlist || upstreamType.contains("mpegurl", true)) {
@@ -209,6 +217,8 @@ class CastRelay(baseClient: OkHttpClient) {
         val head = buildString {
             append("HTTP/1.1 ").append(status).append("\r\n")
             headers.forEach { (k, v) -> append(k).append(": ").append(v).append("\r\n") }
+            // Lets web-based players (Chromecast) use the relay; DLNA TVs ignore these headers.
+            CORS.forEach { (k, v) -> append(k).append(": ").append(v).append("\r\n") }
             append("Connection: close\r\n\r\n")
         }
         out.write(head.toByteArray(Charsets.ISO_8859_1))
@@ -226,6 +236,23 @@ class CastRelay(baseClient: OkHttpClient) {
     }
 
     companion object {
+        private val CORS = mapOf(
+            "Access-Control-Allow-Origin" to "*",
+            "Access-Control-Allow-Methods" to "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers" to "Range, Content-Type, Accept-Encoding",
+            "Access-Control-Expose-Headers" to "Content-Length, Content-Range, Accept-Ranges",
+        )
+
+        /** The phone's address on the route to [remoteHost], or its first Wi-Fi/LAN address when the device's address isn't known. */
+        fun addressFor(remoteHost: String?): String? = remoteHost?.let(::localAddressFor) ?: lanAddress()
+
+        private fun lanAddress(): String? = runCatching {
+            java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }
+                .firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }?.hostAddress
+        }.getOrNull()
+
         /** The phone's address on the route to [remoteHost] (no packet is sent). */
         fun localAddressFor(remoteHost: String): String? = runCatching {
             DatagramSocket().use { s ->

@@ -95,23 +95,25 @@ object DlnaDiscovery {
 }
 
 /** Sends UPnP AVTransport/RenderingControl commands to one renderer. */
-class DlnaRenderer(val device: DlnaDevice, baseClient: OkHttpClient) {
-    data class Status(val state: String, val positionMs: Long?, val durationMs: Long?, val trackUri: String? = null)
-
+class DlnaRenderer(val dlna: DlnaDevice, baseClient: OkHttpClient) : CastTarget {
     private val client = baseClient.newBuilder()
         .connectTimeout(4, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS).build()
     private val xml = "text/xml; charset=\"utf-8\"".toMediaType()
 
-    val host: String get() = java.net.URI(device.avTransportUrl).host
+    override val device = CastDevice(dlna.id, dlna.name, CastKind.Dlna)
+    override val host: String get() = java.net.URI(dlna.avTransportUrl).host
+    override val subtitleMime = "text/srt"
 
-    suspend fun load(url: String, metadata: String) =
-        call(DlnaProtocol.AV_TRANSPORT, "SetAVTransportURI", "CurrentURI" to url, "CurrentURIMetaData" to metadata)
+    override suspend fun load(media: CastLoad) {
+        call(DlnaProtocol.AV_TRANSPORT, "SetAVTransportURI",
+            "CurrentURI" to media.url, "CurrentURIMetaData" to DlnaProtocol.didl(media.title, media.url, media.mime, media.subtitleUrl))
+    }
 
-    suspend fun play() = call(DlnaProtocol.AV_TRANSPORT, "Play", "Speed" to "1")
-    suspend fun pause() = call(DlnaProtocol.AV_TRANSPORT, "Pause")
-    suspend fun stop() = call(DlnaProtocol.AV_TRANSPORT, "Stop")
+    override suspend fun play() { call(DlnaProtocol.AV_TRANSPORT, "Play", "Speed" to "1") }
+    override suspend fun pause() { call(DlnaProtocol.AV_TRANSPORT, "Pause") }
+    override suspend fun stop() { call(DlnaProtocol.AV_TRANSPORT, "Stop") }
     /** Renderers differ in the seek unit they accept; try the common one first. */
-    suspend fun seek(ms: Long) {
+    override suspend fun seek(ms: Long) {
         val target = DlnaProtocol.formatTime(ms)
         try {
             call(DlnaProtocol.AV_TRANSPORT, "Seek", "Unit" to "REL_TIME", "Target" to target)
@@ -120,10 +122,30 @@ class DlnaRenderer(val device: DlnaDevice, baseClient: OkHttpClient) {
         }
     }
 
-    suspend fun status(): Status {
+    /** Whether the TV offers volume control (UPnP RenderingControl). */
+    override val hasVolume: Boolean get() = dlna.renderingControlUrl != null
+
+    /** TV volume 0–100, or null when the TV doesn't say. */
+    override suspend fun volume(): Int? = DlnaProtocol.tag(
+        call(DlnaProtocol.RENDERING_CONTROL, "GetVolume", "Channel" to "Master"), "CurrentVolume"
+    )?.toIntOrNull()
+
+    override suspend fun setVolume(volume: Int) {
+        call(DlnaProtocol.RENDERING_CONTROL, "SetVolume", "Channel" to "Master", "DesiredVolume" to volume.coerceIn(0, 100).toString())
+    }
+
+    override suspend fun muted(): Boolean? = DlnaProtocol.tag(
+        call(DlnaProtocol.RENDERING_CONTROL, "GetMute", "Channel" to "Master"), "CurrentMute"
+    )?.let { it == "1" || it.equals("true", ignoreCase = true) }
+
+    override suspend fun setMuted(muted: Boolean) {
+        call(DlnaProtocol.RENDERING_CONTROL, "SetMute", "Channel" to "Master", "DesiredMute" to if (muted) "1" else "0")
+    }
+
+    override suspend fun status(): CastStatus {
         val transport = call(DlnaProtocol.AV_TRANSPORT, "GetTransportInfo")
         val position = runCatching { call(DlnaProtocol.AV_TRANSPORT, "GetPositionInfo") }.getOrNull()
-        return Status(
+        return CastStatus(
             state = DlnaProtocol.tag(transport, "CurrentTransportState") ?: "UNKNOWN",
             positionMs = DlnaProtocol.parseTime(position?.let { DlnaProtocol.tag(it, "RelTime") }),
             durationMs = DlnaProtocol.parseTime(position?.let { DlnaProtocol.tag(it, "TrackDuration") })?.takeIf { it > 0 },
@@ -133,8 +155,8 @@ class DlnaRenderer(val device: DlnaDevice, baseClient: OkHttpClient) {
 
     /** Returns the SOAP response body; throws when the renderer rejects the action. */
     private suspend fun call(service: String, action: String, vararg args: Pair<String, String>): String = withContext(Dispatchers.IO) {
-        val url = if (service == DlnaProtocol.RENDERING_CONTROL) device.renderingControlUrl ?: throw IOException("No RenderingControl")
-        else device.avTransportUrl
+        val url = if (service == DlnaProtocol.RENDERING_CONTROL) dlna.renderingControlUrl ?: throw IOException("No RenderingControl")
+        else dlna.avTransportUrl
         val envelope = DlnaProtocol.soapEnvelope(service, action, listOf("InstanceID" to "0") + args)
         val request = Request.Builder().url(url)
             .header("SOAPACTION", DlnaProtocol.soapAction(service, action))

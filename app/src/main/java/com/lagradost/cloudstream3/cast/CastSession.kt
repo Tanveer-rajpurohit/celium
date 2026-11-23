@@ -82,6 +82,8 @@ data class CastNowPlaying(
     /** Short information that stays visible, e.g. "720p wasn't available, playing 1080p". */
     val notice: String? = null,
     val prompt: CastPrompt? = null,
+    /** Audio and subtitle tracks inside the playing video (Chromecast reports them; DLNA TVs don't). */
+    val tracks: List<CastTrack> = emptyList(),
 )
 
 /**
@@ -112,13 +114,20 @@ data class CastResume(
     val quality: Int?,
     val language: String?,
     val subtitleLang: String? = null,
+    /** The TV fetches the video itself (not through the phone's relay). */
+    val direct: Boolean = false,
 )
 
 data class CastState(
-    val device: DlnaDevice? = null,
+    val device: CastDevice? = null,
     val nowPlaying: CastNowPlaying? = null,
     /** Full-screen cast controls are showing (otherwise the mini bar). */
     val controllerOpen: Boolean = false,
+    /** TV volume 0–100; null when the TV doesn't offer volume control. */
+    val volume: Int? = null,
+    val muted: Boolean = false,
+    /** The TV accepts volume commands but doesn't change: only its own remote works. */
+    val volumeIgnored: Boolean = false,
 ) {
     val connected get() = device != null
 }
@@ -147,8 +156,12 @@ object CastSession {
         @Volatile var done = false
         /** Links that passed the phone check but the TV still couldn't play. */
         @Volatile var tvFailures = 0
+        /** Length worked out on the phone (HLS playlists), for TVs that report 0. */
+        @Volatile var knownDuration: Long? = null
+        /** The current video is fetched by the TV itself, not relayed by the phone. */
+        @Volatile var direct = false
 
-        fun ranked() = synchronized(this) { CastLinks.rank(links) }
+        fun ranked() = synchronized(this) { CastLinks.rank(links, chromecast = renderer?.isChromecast == true) }
         fun subtitles() = synchronized(this) { subs.distinctBy { it.url } }
         fun failure(url: String) = synchronized(this) { failures[url] }
         fun fail(url: String, reason: String) = synchronized(this) { failures[url] = reason }
@@ -173,21 +186,31 @@ object CastSession {
     val state: StateFlow<CastState> = _state.asStateFlow()
     val isConnected get() = renderer != null
 
-    @Volatile private var renderer: DlnaRenderer? = null
+    /** The connected TV or device: a DLNA renderer or a Chromecast. */
+    @Volatile private var renderer: CastTarget? = null
     private var relay: CastRelay? = null
     private var playJob: Job? = null
     private var switchJob: Job? = null
     private var monitorJob: Job? = null
     @Volatile private var media: Media? = null
     @Volatile private var userStopped = false
+    /**
+     * Whether this device can fetch videos itself (null = not tried yet). Some TVs can't open HTTPS
+     * links or are refused by the host; after one failure, everything goes through the relay.
+     */
+    @Volatile private var directOk: Boolean? = null
 
-    fun connect(context: Context, device: DlnaDevice) {
+    fun connect(context: Context, device: DlnaDevice) = connect(context, DlnaRenderer(device, app.baseClient))
+
+    fun connect(context: Context, target: CastTarget) {
         if (renderer != null) disconnect(context)
-        renderer = DlnaRenderer(device, app.baseClient)
+        renderer = target
+        directOk = null
         appContext = context.applicationContext
         if (language == null) language = StreamChoice.normalize(CS3IPlayer.preferredAudioTrackLanguage)
         if (relay == null) relay = CastRelay(app.baseClient)
-        _state.value = CastState(device)
+        _state.value = CastState(target.device)
+        refreshVolume()
         CastService.start(context)
     }
 
@@ -200,10 +223,25 @@ object CastSession {
         // Stop the TV before closing the relay, or it keeps retrying a dead stream.
         scope.launch {
             if (wasPlaying && r != null) runCatching { withTimeout(5_000) { r.stop() } }
+            r?.let { runCatching { withTimeout(5_000) { it.release() } } }
             if (renderer == null) relay?.stop()
         }
         _state.value = CastState()
-        context?.let(CastService::stop)
+        (context ?: appContext)?.let(CastService::stop)
+    }
+
+    /** The connected TV or device, if any. */
+    fun target(): CastTarget? = renderer
+
+    /** The device ended the connection itself (e.g. a Chromecast stopped from the TV or another phone). */
+    fun targetLost(target: CastTarget) {
+        if (renderer !== target) return
+        cancelAll()
+        renderer = null; media = null
+        forget()
+        scope.launch { if (renderer == null) relay?.stop() }
+        _state.value = CastState()
+        appContext?.let(CastService::stop)
     }
 
     fun openController(open: Boolean) = _state.update { it.copy(controllerOpen = open && it.nowPlaying != null) }
@@ -401,6 +439,12 @@ object CastSession {
         val m = media ?: return
         m.subtitle = index?.let { m.subtitles().getOrNull(it) }
         val current = m.current ?: return publish(m)
+        val tracks = _state.value.nowPlaying?.tracks.orEmpty()
+        if (index == null && renderer?.isChromecast == true && tracks.isNotEmpty()) {
+            // Chromecast: turning subtitles off doesn't need a reload.
+            publish(m)
+            return control { r -> r.selectTracks(tracks.filter { it.audio && it.active }.map { it.id }); refreshTracks(m) }
+        }
         val position = _state.value.nowPlaying?.positionMs ?: 0
         monitorJob?.cancel(); switchJob?.cancel()
         switchJob = scope.launch {
@@ -408,12 +452,41 @@ object CastSession {
         }
     }
 
+    /** Reads the tracks inside the playing video (Chromecast only); the receiver finds HLS tracks after loading. */
+    private fun refreshTracks(m: Media) {
+        val r = renderer ?: return
+        if (!r.isChromecast) return
+        scope.launch {
+            delay(1_500)
+            val tracks = runCatching { r.tracks() }.getOrNull() ?: return@launch
+            publish(m) { copy(tracks = tracks) }
+        }
+    }
+
+    /** Switches to an audio track inside the video (Chromecast), keeping the active subtitle track. Instant, no reload. */
+    fun selectAudioTrack(id: Long) {
+        val m = media ?: return
+        val tracks = _state.value.nowPlaying?.tracks.orEmpty()
+        val ids = listOf(id) + tracks.filter { !it.audio && it.active }.map { it.id }
+        publish(m) { copy(tracks = tracks.map { if (it.audio) it.copy(active = it.id == id) else it }) }
+        control { r -> r.selectTracks(ids); refreshTracks(m) }
+    }
+
+    /** Switches to a subtitle track inside the video (Chromecast), keeping the audio track. */
+    fun selectTextTrack(id: Long) {
+        val m = media ?: return
+        val tracks = _state.value.nowPlaying?.tracks.orEmpty()
+        val ids = tracks.filter { it.audio && it.active }.map { it.id } + id
+        publish(m) { copy(tracks = tracks.map { if (!it.audio) it.copy(active = it.id == id) else it }) }
+        control { r -> r.selectTracks(ids); refreshTracks(m) }
+    }
+
     private fun cancelAll() {
         lazySearch = null
         playJob?.cancel(); switchJob?.cancel(); monitorJob?.cancel()
     }
 
-    private fun control(block: suspend (DlnaRenderer) -> Unit) {
+    private fun control(block: suspend (CastTarget) -> Unit) {
         val r = renderer ?: return
         scope.launch {
             try { block(r) } catch (e: Exception) { setPlaying { copy(message = "The TV didn't respond") } }
@@ -431,11 +504,12 @@ object CastSession {
     }
 
     private fun snapshot(m: Media, previous: CastNowPlaying?): CastNowPlaying {
-        val ranked = m.ranked()
+        // One copy of everything under the lock, then plain work: this runs while ~100 sources arrive.
+        val (ranked, failures) = synchronized(m) { m.ranked() to HashMap(m.failures) }
         val subs = m.subtitles()
         val current = m.current?.url
         val sources = ranked.map { link ->
-            val reason = m.failure(link.url)
+            val reason = failures[link.url]
             val status = when {
                 link.url == current -> CastSourceStatus.Playing
                 link.url == m.checking -> CastSourceStatus.Checking
@@ -458,15 +532,43 @@ object CastSession {
             quality = chosenQuality,
             playingQuality = m.current?.let { StreamChoice.bucket(it.quality) },
             autoCap = cap(),
-            qualities = StreamChoice.available(m.options(), m.failedKeys()),
+            qualities = StreamChoice.available(ranked.map { StreamOption(it.url, it.source, it.name, it.quality) }, failures.keys),
             language = language,
             languages = ranked.flatMap { StreamChoice.languages(it.name).orEmpty() }.filter { it != StreamChoice.MULTI }.distinct(),
         )
     }
 
+    private val publishLock = Any()
+
+    /**
+     * Rebuilds the whole cast screen state (sources, qualities, languages). One thread at a time: many
+     * threads rebuilding at once (sources arrive from dozens of threads) piled up and ran the phone out
+     * of memory. Use [update] for frequent small changes and [publishSoon] while sources arrive.
+     */
     private fun publish(m: Media, change: CastNowPlaying.() -> CastNowPlaying = { this }) {
         if (media !== m) return
-        _state.update { s -> s.copy(nowPlaying = snapshot(m, s.nowPlaying).change()) }
+        synchronized(publishLock) {
+            if (media !== m) return
+            _state.update { s -> s.copy(nowPlaying = snapshot(m, s.nowPlaying).change()) }
+        }
+    }
+
+    /** Cheap change of a few fields (position, paused…), without rebuilding the source lists. */
+    private fun update(m: Media, change: CastNowPlaying.() -> CastNowPlaying) {
+        if (media !== m) return
+        _state.update { s -> s.copy(nowPlaying = s.nowPlaying?.change()) }
+    }
+
+    private val publishPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** While sources arrive, refresh the screen at most a few times a second instead of once per source. */
+    private fun publishSoon(m: Media) {
+        if (!publishPending.compareAndSet(false, true)) return
+        scope.launch {
+            delay(300)
+            publishPending.set(false)
+            publish(m)
+        }
     }
 
     private fun fail(m: Media, message: String, title: String? = null, mirror: Boolean = false) =
@@ -481,7 +583,7 @@ object CastSession {
         // Collect sources in the background; the TV starts with the first good ones.
         launch { collectLinks(m, api) }
 
-        val host = withContext(Dispatchers.IO) { CastRelay.localAddressFor(r.host) }
+        val host = withContext(Dispatchers.IO) { CastRelay.addressFor(r.host) }
             ?: return@coroutineScope fail(m, "Connect this phone to the same Wi-Fi as ${r.device.name}")
         try { relay.start(host) } catch (e: Exception) { logError(e); return@coroutineScope fail(m, "Couldn't start casting on this phone") }
 
@@ -531,11 +633,11 @@ object CastSession {
                         m.subtitle = sub
                     }
                     else if (m.current == null && m.subtitle == null && sub.langTag?.startsWith("en") == true) m.subtitle = sub
-                    publish(m)
+                    publishSoon(m)
                 },
                 { link ->
                     synchronized(m) { if (m.links.none { it.url == link.url }) m.links.add(link) }
-                    publish(m)
+                    publishSoon(m)
                 })
         } catch (e: CancellationException) {
             throw e
@@ -552,16 +654,18 @@ object CastSession {
     private const val RESUME_KEY = "celium_cast_resume"
     @Volatile private var restoreTried = false
 
-    private fun persist(m: Media, r: DlnaRenderer, relay: CastRelay) {
+    private fun persist(m: Media, target: CastTarget, relay: CastRelay) {
+        // Only DLNA sessions are restored by Celium; the Cast SDK keeps track of Chromecast sessions.
+        val r = target as? DlnaRenderer ?: return
         val link = m.current ?: return
         val port = relay.port ?: return
         val host = relay.host ?: return
         runCatching {
             setKey(RESUME_KEY, CastResume(
-                r.device.id, r.device.name, r.device.avTransportUrl, r.device.renderingControlUrl,
+                r.dlna.id, r.dlna.name, r.dlna.avTransportUrl, r.dlna.renderingControlUrl,
                 m.q.apiName, m.q.title, m.q.poster, m.q.episodes, m.q.index,
                 link.source, link.name, link.url, link.referer, link.quality, link.type, link.headers,
-                m.subtitle?.url, host, port, relay.saved(), chosenQuality, language, m.subtitle?.lang,
+                m.subtitle?.url, host, port, relay.saved(), chosenQuality, language, m.subtitle?.lang, m.direct,
             ).toJson())
         }.onFailure(::logError)
     }
@@ -584,7 +688,7 @@ object CastSession {
             val r = DlnaRenderer(device, app.baseClient)
             val status = runCatching { withTimeout(8_000) { r.status() } }.getOrNull()
             // Only if the TV is still on our video, not something started on the TV since.
-            val ours = status?.trackUri?.contains(":${saved.relayPort}/s/") ?: true
+            val ours = status?.trackUri?.let { if (saved.direct) it == saved.linkUrl else it.contains(":${saved.relayPort}/s/") } ?: true
             if (status == null || status.state !in ACTIVE_STATES || !ours || saved.index !in saved.episodes.indices || renderer != null) {
                 if (renderer == null) forget()
                 return@launch
@@ -609,11 +713,14 @@ object CastSession {
             relay.restore(saved.relay)
             runCatching { relay.start(host, saved.relayPort) }.onFailure(::logError)
             // Same address: the TV keeps streaming through the restarted relay. Otherwise reload at the same spot.
-            val sameUrls = relay.port == saved.relayPort && host == saved.relayHost
+            // (A TV fetching the video itself doesn't need the relay at all.)
+            val sameUrls = saved.direct || (relay.port == saved.relayPort && host == saved.relayHost)
 
             val m = Media(Queue(saved.apiName, saved.title, saved.poster, saved.episodes, saved.index))
             synchronized(m) { m.links.add(link) }
             m.current = link
+            m.direct = saved.direct
+            if (saved.direct) directOk = true
             saved.subtitleUrl?.let { url ->
                 val sub = SubtitleFile(saved.subtitleLang ?: "Subtitles", url)
                 synchronized(m) { m.subs.add(sub) }
@@ -621,7 +728,8 @@ object CastSession {
             }
             media = m
             val position = status.positionMs ?: 0
-            _state.value = CastState(device, controllerOpen = true)
+            _state.value = CastState(r.device, controllerOpen = true)
+            refreshVolume()
             publish(m) {
                 copy(
                     loading = false, positionMs = position, durationMs = status.durationMs ?: durationMs,
@@ -629,6 +737,7 @@ object CastSession {
                 )
             }
             CastService.start(ctx)
+            learnDuration(m, link)
             if (sameUrls) monitor(m, r)
             else switchJob = scope.launch {
                 if (!attempt(m, link, position, check = false)) fail(m, "Couldn't reconnect to ${device.name}. Tap Retry.")
@@ -637,6 +746,81 @@ object CastSession {
             m.done = true
             publish(m)
             lazySearch = { getApiFromNameNull(saved.apiName)?.let { api -> collectLinks(m, api, saved.subtitleUrl) } }
+        }
+    }
+
+    // ---- TV volume ----
+
+    private var volumeJob: Job? = null
+    /** When the user last changed the volume; TV readings older than that are ignored. */
+    @Volatile private var volumeChangedAt = 0L
+    /** Volume to go back to when unmuting (mute is done as volume 0: some TVs, e.g. Kodi, ignore SetMute). */
+    @Volatile private var volumeBeforeMute: Int? = null
+
+    /** Reads the TV's volume, unless the user is changing it right now. */
+    private fun refreshVolume() {
+        val r = renderer ?: return
+        if (!r.hasVolume || _state.value.volumeIgnored) return
+        scope.launch {
+            val started = System.currentTimeMillis()
+            val volume = runCatching { r.volume() }.getOrNull() ?: return@launch
+            val tvMuted = runCatching { r.muted() }.getOrNull() ?: false
+            if (renderer !== r || volumeChangedAt > started) return@launch
+            if (volume > 0) volumeBeforeMute = null
+            _state.update { it.copy(volume = volume, muted = tvMuted || (volume == 0 && volumeBeforeMute != null)) }
+        }
+    }
+
+    /** Sets the TV volume (0–100). Rapid changes, e.g. dragging a slider, send only the latest. */
+    fun setVolume(volume: Int) {
+        val r = renderer ?: return
+        if (!r.hasVolume || _state.value.volumeIgnored) return
+        val target = volume.coerceIn(0, 100)
+        val before = _state.value.volume
+        // Muted with the TV's own remote: raising the volume should unmute it too.
+        val unmuteTv = _state.value.muted && volumeBeforeMute == null && target > 0
+        if (target > 0) volumeBeforeMute = null
+        volumeChangedAt = System.currentTimeMillis()
+        _state.update { it.copy(volume = target, muted = target == 0 && volumeBeforeMute != null) }
+        volumeJob?.cancel()
+        volumeJob = scope.launch {
+            delay(120)
+            try {
+                if (unmuteTv) runCatching { r.setMuted(false) }
+                r.setVolume(target)
+                // Some TVs accept the command but keep their volume: check, and stop offering it if so.
+                delay(700)
+                val actual = runCatching { r.volume() }.getOrNull()
+                if (actual != null && actual != target && actual == before && kotlin.math.abs(target - (before ?: target)) > 2) {
+                    _state.update { it.copy(volume = actual, volumeIgnored = true) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(volume = before, volumeIgnored = true) }
+            }
+        }
+    }
+
+    /** Volume buttons: one step up or down. */
+    fun stepVolume(up: Boolean) {
+        val current = _state.value.volume ?: return
+        val base = if (current == 0 && up) volumeBeforeMute ?: 0 else current
+        setVolume(base + if (up) 5 else -5)
+    }
+
+    fun toggleMute() {
+        val state = _state.value
+        val volume = state.volume ?: return
+        when {
+            // Muted with the TV's own remote.
+            state.muted && volumeBeforeMute == null -> setVolume(volume.coerceAtLeast(10))
+            state.muted || volume == 0 -> setVolume(volumeBeforeMute ?: 30)
+            else -> {
+                setVolume(0)
+                volumeBeforeMute = volume
+                _state.update { it.copy(muted = true) }
+            }
         }
     }
 
@@ -654,6 +838,18 @@ object CastSession {
     }
 
     private val ACTIVE_STATES = setOf("PLAYING", "PAUSED_PLAYBACK", "TRANSITIONING")
+
+    /** Some TVs report no length for HLS: work it out from the playlist so the progress bar works. */
+    private fun learnDuration(m: Media, link: ExtractorLink) {
+        m.knownDuration = null
+        if (link.type != ExtractorLinkType.M3U8) return
+        scope.launch {
+            val duration = LinkCheck.hlsDuration(app.baseClient, link.url, link.getAllHeaders()) ?: return@launch
+            if (m.current?.url != link.url) return@launch
+            m.knownDuration = duration
+            publish(m) { if (durationMs <= 0) copy(durationMs = duration) else this }
+        }
+    }
 
     /** Tries one link on the TV. Returns true once it is playing. */
     private suspend fun attempt(m: Media, link: ExtractorLink, startMs: Long, check: Boolean): Boolean {
@@ -674,20 +870,42 @@ object CastSession {
         publish(m) { copy(message = "Starting $label on $tv…") }
         val mime = CastLinks.mime(link.type, link.url)
         val title = listOfNotNull(m.q.title, label(m.q)).joinToString(" · ")
-        val ok = try {
-            relay.clear()
-            val subUrl = m.subtitle?.let { relay.register(it.url, it.headers.orEmpty(), "text/srt", false, "subtitle", subtitle = true) }
-            val url = relay.register(link.url, headers, mime, playlist, "video", captionUrl = subUrl)
+        val poster = m.q.episode.poster ?: m.q.poster
+        // Let the TV fetch the video itself when it needs no special headers: then the phone doesn't relay the
+        // whole video. Chromecast's player needs CORS for HLS, which hosts rarely send, so HLS stays relayed there.
+        val tryDirect = directOk != false && !(r.isChromecast && playlist) &&
+            withContext(Dispatchers.IO) { runCatching { LinkCheck.worksDirect(app.baseClient, link.url, playlist) }.getOrDefault(false) }
+        relay.clear()
+        val subUrl = m.subtitle?.let { relay.register(it.url, it.headers.orEmpty(), r.subtitleMime, false, "subtitle", subtitle = true) }
+        val relayUrl = relay.register(link.url, headers, mime, playlist, "video", captionUrl = subUrl)
+        suspend fun send(url: String): Boolean = try {
             m.current = null // the TV is about to leave the previous video
-            runCatching { r.stop() }
-            r.load(url, DlnaProtocol.didl(title, url, mime, subUrl))
-            r.play()
+            if (r.isChromecast) {
+                // A Chromecast replaces the video and starts at the position itself.
+                r.load(CastLoad(url, mime, title, subUrl, m.subtitle?.lang, poster, startMs))
+            } else {
+                runCatching { r.stop() }
+                r.load(CastLoad(url, mime, title, subUrl, m.subtitle?.lang, poster))
+                r.play()
+            }
             waitUntilPlaying(r)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logError(e); false
         }
+        var direct = tryDirect
+        var ok = send(if (direct) link.url else relayUrl)
+        if (direct) {
+            directOk = ok
+            if (!ok) {
+                // This TV couldn't fetch it itself (HTTPS, host rules…): relay from now on.
+                direct = false
+                publish(m) { copy(message = "Starting $label on $tv through this phone…") }
+                ok = send(relayUrl)
+            }
+        }
+        m.direct = direct
         m.checking = null
         if (!ok) {
             m.tvFailures++
@@ -699,13 +917,15 @@ object CastSession {
         m.current = link
         if (language == null) language = StreamChoice.singleLanguage(link.name)
         persist(m, r, relay)
-        if (startMs > 0) runCatching { r.seek(startMs) }
+        learnDuration(m, link)
+        if (startMs > 0 && !r.isChromecast) runCatching { r.seek(startMs) }
         publish(m) { copy(loading = false, failed = false, message = null, positionMs = startMs, paused = false) }
         monitor(m, r)
+        refreshTracks(m)
         return true
     }
 
-    private suspend fun waitUntilPlaying(r: DlnaRenderer): Boolean {
+    private suspend fun waitUntilPlaying(r: CastTarget): Boolean {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < 20_000) {
             delay(1_000)
@@ -717,7 +937,7 @@ object CastSession {
         return false
     }
 
-    private fun monitor(m: Media, r: DlnaRenderer) {
+    private fun monitor(m: Media, r: CastTarget) {
         monitorJob?.cancel()
         val q = m.q
         monitorJob = scope.launch {
@@ -739,9 +959,10 @@ object CastSession {
                 when (s.state) {
                     "PLAYING", "PAUSED_PLAYBACK", "TRANSITIONING" -> {
                         s.positionMs?.let { lastPos = it }
-                        s.durationMs?.let { lastDur = it }
-                        publish(m) { copy(positionMs = lastPos, durationMs = lastDur, paused = s.state == "PAUSED_PLAYBACK", loading = s.state == "TRANSITIONING", message = null) }
+                        (s.durationMs ?: m.knownDuration)?.let { lastDur = it }
+                        update(m) { copy(positionMs = lastPos, durationMs = lastDur, paused = s.state == "PAUSED_PLAYBACK", loading = s.state == "TRANSITIONING", message = null) }
                         if (++tick % 5 == 0) save()
+                        if (tick % 10 == 0) { refreshVolume(); refreshTracks(m) }
                     }
                     "STOPPED", "NO_MEDIA_PRESENT" -> {
                         save()

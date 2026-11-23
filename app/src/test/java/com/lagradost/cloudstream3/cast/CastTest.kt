@@ -126,10 +126,15 @@ class CastTest {
         assertSame(srt, CastLinks.vttToSrt(srt))
     }
 
-    @Test fun `didl carries subtitles for kodi and samsung style tvs`() {
+    @Test fun `didl carries subtitles for kodi, samsung and lg style tvs`() {
         val didl = DlnaProtocol.didl("T", "http://p/v.mp4", "video/mp4", "http://p/s.srt")
-        assertTrue(didl.contains("<res protocolInfo=\"http-get:*:text/srt:*\">http://p/s.srt</res>"))
-        assertTrue(didl.contains("sec:CaptionInfoEx"))
+        assertTrue(didl.contains("<res protocolInfo=\"http-get:*:text/srt:*\">http://p/s.srt</res>")) // Kodi
+        assertTrue(didl.contains("sec:CaptionInfoEx")) // Samsung
+        // LG / Sony: PacketVideo attributes on the video resource, with the namespace declared
+        assertTrue(didl.contains("xmlns:pv=\"http://www.pv.com/pvns/\""))
+        assertTrue(didl.contains("pv:subtitleFileUri=\"http://p/s.srt\" pv:subtitleFileType=\"srt\">http://p/v.mp4</res>"))
+        // Without subtitles nothing extra is sent
+        assertFalse(DlnaProtocol.didl("T", "http://p/v.mp4", "video/mp4").contains("pv:subtitleFileUri"))
     }
 
     @Test fun `relay probe reports blocked links and converts subtitles`() {
@@ -216,5 +221,23 @@ class CastTest {
         } finally {
             relay.stop(); upstream.close()
         }
+    }
+
+    @Test fun `hls first segment and encryption are found`() {
+        val media = listOf("#EXTM3U", "#EXT-X-KEY:METHOD=NONE", "#EXTINF:4,", "seg/0.ts", "#EXTINF:4,", "seg/1.ts").joinToString("\n")
+        assertEquals("https://cdn.example/v/seg/0.ts", HlsRewriter.firstSegment(media, "https://cdn.example/v/index.m3u8"))
+        assertFalse(HlsRewriter.isEncrypted(media))
+        assertTrue(HlsRewriter.isEncrypted(media.replace("METHOD=NONE", "METHOD=AES-128,URI=\"key.bin\"")))
+    }
+
+    @Test fun `hls length is worked out from the playlist`() {
+        val media = listOf("#EXTM3U", "#EXT-X-TARGETDURATION:10", "#EXTINF:10.0,", "a.ts", "#EXTINF:9.5,", "b.ts", "#EXTINF:4,", "c.ts", "#EXT-X-ENDLIST")
+            .joinToString("\n")
+        assertEquals(23_500L, HlsRewriter.duration(media))
+        assertNull(HlsRewriter.duration(media.replace("#EXT-X-ENDLIST", ""))) // live: no fixed length
+        val master = listOf("#EXTM3U", "#EXT-X-STREAM-INF:BANDWIDTH=800000", "720/index.m3u8", "#EXT-X-STREAM-INF:BANDWIDTH=400000", "480/index.m3u8")
+            .joinToString("\n")
+        assertEquals("https://cdn.example/v/720/index.m3u8", HlsRewriter.firstVariant(master, "https://cdn.example/v/master.m3u8"))
+        assertNull(HlsRewriter.firstVariant(media, "https://cdn.example/v/index.m3u8"))
     }
 }

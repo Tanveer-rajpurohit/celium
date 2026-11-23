@@ -7,11 +7,17 @@ import java.net.URI
 
 /** Pure decisions for casting: which links to try, their media type, and when an episode ended. */
 object CastLinks {
-    /** Links a TV renderer can play through the relay, best quality first. DASH/torrents are skipped. */
-    fun rank(links: List<ExtractorLink>): List<ExtractorLink> = links
+    /**
+     * Links a TV renderer can play through the relay, best quality first. DASH/torrents are skipped.
+     * Chromecast plays MP4, WebM and HLS only, so MKV/AVI/TS files are left out for it.
+     */
+    fun rank(links: List<ExtractorLink>, chromecast: Boolean = false): List<ExtractorLink> = links
         .filter { (it.type == ExtractorLinkType.VIDEO || it.type == ExtractorLinkType.M3U8) && it.audioTracks.isEmpty() }
+        .filter { !chromecast || mime(it.type, it.url) in CHROMECAST_TYPES }
         .distinctBy { it.url }
         .sortedWith(compareByDescending<ExtractorLink> { it.quality }.thenBy { if (it.type == ExtractorLinkType.VIDEO) 0 else 1 })
+
+    private val CHROMECAST_TYPES = setOf("application/vnd.apple.mpegurl", "video/mp4", "video/webm")
 
     fun mime(type: ExtractorLinkType, url: String): String {
         if (type == ExtractorLinkType.M3U8) return "application/vnd.apple.mpegurl"
@@ -32,6 +38,7 @@ object CastLinks {
         "video/x-msvideo" -> "avi"
         "video/mp2t" -> "ts"
         "text/srt" -> "srt"
+        "text/vtt" -> "vtt"
         else -> "mp4"
     }
 
@@ -73,6 +80,29 @@ object CastLinks {
     private val vttTime = Regex("(?:(\\d{1,2}):)?(\\d{2}):(\\d{2})[.,](\\d{3})")
     private val vttTag = Regex("<(?!/?[ibu]>)[^>]*>")
     private val blankLines = Regex("\\n{2,}")
+
+    private val srtTime = Regex("(\\d{1,2}):(\\d{2}):(\\d{2}),(\\d{3})")
+
+    /** Converts SRT to WebVTT, which Chromecast reads. WebVTT is returned unchanged. */
+    fun srtToVtt(text: String): String {
+        val clean = text.trimStart('﻿').replace("\r\n", "\n").replace('\r', '\n')
+        if (clean.startsWith("WEBVTT")) return clean
+        val out = StringBuilder("WEBVTT\n\n")
+        for (block in clean.trim().split(blankLines)) {
+            val lines = block.lines()
+            val timing = lines.indexOfFirst { it.contains("-->") }
+            if (timing < 0) continue
+            val cueTiming = srtTime.replace(lines[timing]) { m ->
+                "%02d:%s:%s.%s".format(m.groupValues[1].toInt(), m.groupValues[2], m.groupValues[3], m.groupValues[4])
+            }
+            val body = lines.drop(timing + 1).filter { it.isNotBlank() }
+            if (body.isEmpty()) continue
+            out.append(cueTiming).append('\n')
+            body.forEach { out.append(it).append('\n') }
+            out.append('\n')
+        }
+        return out.toString()
+    }
 
     /** Converts WebVTT to SRT, which TVs read. Text that is not WebVTT is returned unchanged. */
     fun vttToSrt(text: String): String {

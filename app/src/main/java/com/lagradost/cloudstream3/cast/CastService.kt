@@ -8,6 +8,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.VolumeProvider
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
@@ -33,6 +36,8 @@ class CastService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var session: MediaSession? = null
+    private var volumeProvider: VolumeProvider? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -50,6 +55,7 @@ class CastService : Service() {
         wakeLock = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "celium:cast")
             ?.apply { setReferenceCounted(false); acquire() }
+        startVolumeSession()
         scope.launch {
             CastSession.state
                 .map { s -> Triple(s.device?.name, s.nowPlaying?.let { it.title to it.label }, s.nowPlaying?.paused) }
@@ -70,7 +76,53 @@ class CastService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * A media session playing "remotely" with the TV's volume: Android then sends the phone's
+     * volume buttons to the TV while casting, as it does for Chromecast.
+     */
+    private fun startVolumeSession() {
+        val media = MediaSession(this, "CeliumCast")
+        session = media
+        scope.launch {
+            CastSession.state
+                .map { s -> listOf(s.volume, s.muted, s.nowPlaying?.paused, s.volumeIgnored) }
+                .distinctUntilChanged()
+                .collect {
+                    val state0 = CastSession.state.value
+                    val volume = state0.volume
+                    val muted = state0.muted
+                    val paused = state0.nowPlaying?.paused
+                    val state = if (paused == true) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING
+                    media.setPlaybackState(PlaybackState.Builder().setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f).build())
+                    if (state0.volumeIgnored) {
+                        // The TV ignores volume commands: give the buttons back to the phone.
+                        if (volumeProvider != null) media.setPlaybackToLocal(
+                            android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build()
+                        )
+                        volumeProvider = null
+                        return@collect
+                    }
+                    // Chromecast: the Cast SDK already sends the volume buttons to the TV.
+                    if (volume == null || state0.device?.kind == CastKind.Chromecast) return@collect
+                    val provider = volumeProvider ?: object : VolumeProvider(VOLUME_CONTROL_ABSOLUTE, 100, volume) {
+                        override fun onAdjustVolume(direction: Int) {
+                            if (direction != 0) CastSession.stepVolume(up = direction > 0)
+                        }
+
+                        override fun onSetVolumeTo(volume: Int) = CastSession.setVolume(volume)
+                    }.also {
+                        volumeProvider = it
+                        media.setPlaybackToRemote(it)
+                        media.isActive = true
+                    }
+                    provider.currentVolume = if (muted) 0 else volume
+                }
+        }
+    }
+
     override fun onDestroy() {
+        runCatching { session?.release() }
+        session = null
         scope.cancel()
         runCatching { wifiLock?.release() }
         runCatching { wakeLock?.release() }

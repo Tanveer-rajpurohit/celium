@@ -25,6 +25,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.ui.celium.CeliumArtwork
 import com.lagradost.cloudstream3.ui.player.StreamChoice
+import kotlinx.coroutines.launch
 
 /** Top-bar cast icon. Tapping it connects to a TV, or shows the connected TV with Disconnect. */
 @Composable
@@ -67,31 +68,86 @@ private fun ConnectedDialog(state: CastState, onClose: () -> Unit) {
 private fun DevicePickerDialog(onClose: () -> Unit) {
     val context = LocalContext.current
     var devices by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
+    var chromecasts by remember { mutableStateOf<List<androidx.mediarouter.media.MediaRouter.RouteInfo>>(emptyList()) }
     var scanning by remember { mutableStateOf(true) }
     var attempt by remember { mutableIntStateOf(0) }
     var mirror by remember { mutableStateOf(false) }
+    var connecting by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     if (mirror) return MirrorScreenDialog(onClose = { mirror = false; onClose() })
     LaunchedEffect(attempt) {
         scanning = true
         devices = runCatching { DlnaDiscovery.scan(context) }.getOrDefault(emptyList())
         scanning = false
     }
+    // Chromecasts / Google TVs, found by Android's media router while this dialog is open.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        val selector = Chromecast.selector()
+        val router = selector?.let { androidx.mediarouter.media.MediaRouter.getInstance(context) }
+        val callback = object : androidx.mediarouter.media.MediaRouter.Callback() {
+            override fun onRouteAdded(router: androidx.mediarouter.media.MediaRouter, route: androidx.mediarouter.media.MediaRouter.RouteInfo) = update()
+            override fun onRouteChanged(router: androidx.mediarouter.media.MediaRouter, route: androidx.mediarouter.media.MediaRouter.RouteInfo) = update()
+            override fun onRouteRemoved(router: androidx.mediarouter.media.MediaRouter, route: androidx.mediarouter.media.MediaRouter.RouteInfo) = update()
+            fun update() { if (selector != null) chromecasts = Chromecast.routes(context, selector) }
+        }
+        if (router != null && selector != null) {
+            router.addCallback(selector, callback, androidx.mediarouter.media.MediaRouter.CALLBACK_FLAG_PERFORM_ACTIVE_SCAN)
+            callback.update()
+        }
+        onDispose { router?.removeCallback(callback) }
+    }
+    fun connectChromecast(route: androidx.mediarouter.media.MediaRouter.RouteInfo) {
+        connecting = route.name
+        error = null
+        scope.launch {
+            try {
+                CastSession.connect(context, Chromecast.connect(context, route))
+                onClose()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "Couldn't connect to ${route.name}"
+            } finally {
+                connecting = null
+            }
+        }
+    }
+    val nothingFound = devices.isEmpty() && chromecasts.isEmpty()
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Cast to a TV or device") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (scanning) {
+                connecting?.let {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("Connecting to $it…")
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (connecting == null && scanning) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text("Looking for devices on your Wi-Fi…")
-                } else if (devices.isEmpty()) {
-                    Text("Nothing found. Make sure the TV or device is on, on the same Wi-Fi as this phone, and that media sharing (DLNA) is turned on.")
+                } else if (connecting == null && nothingFound) {
+                    Text("Nothing found. Make sure the TV or device is on and on the same Wi-Fi as this phone. Smart TVs need media sharing (DLNA) turned on; Google TV and Chromecast are found automatically.")
                 }
                 if (!scanning) TextButton(onClick = { mirror = true }, contentPadding = PaddingValues(0.dp)) {
                     Icon(painterResource(R.drawable.screen_mirror), null, Modifier.size(18.dp))
                     Text("Or mirror your screen instead", Modifier.padding(start = 8.dp))
                 }
                 LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(chromecasts, key = { "cc:" + it.id }) { route ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = connecting == null) { connectChromecast(route) }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(painterResource(R.drawable.cast), null, Modifier.size(22.dp))
+                            Column(Modifier.padding(start = 16.dp)) {
+                                Text(route.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(route.description?.takeIf { it.isNotBlank() } ?: "Chromecast",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                        }
+                    }
                     items(devices, key = { it.id }) { device ->
                         Row(
                             Modifier.fillMaxWidth().clickable { CastSession.connect(context, device); onClose() }.padding(vertical = 14.dp),
@@ -164,10 +220,38 @@ private fun time(ms: Long): String {
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
 
+/** TV volume: mute button and slider. The phone's volume buttons also work while casting (see CastService). */
+@Composable
+private fun VolumeRow(volume: Int, muted: Boolean, tv: String) {
+    var dragging by remember { mutableStateOf<Float?>(null) }
+    Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = CastSession::toggleMute) {
+            Icon(
+                painterResource(if (muted || volume == 0) R.drawable.ic_baseline_volume_mute_24 else R.drawable.ic_baseline_volume_up_24),
+                if (muted) "Unmute $tv" else "Mute $tv",
+                tint = if (muted) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Slider(
+            value = dragging ?: (volume / 100f),
+            onValueChange = { dragging = it; CastSession.setVolume((it * 100).toInt()) },
+            onValueChangeFinished = { dragging = null },
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            if (muted) "Muted" else "${(dragging?.let { (it * 100).toInt() } ?: volume)}",
+            Modifier.width(48.dp).padding(start = 8.dp),
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
 @Composable
 private fun CastController(state: CastState, playing: CastNowPlaying) {
     val context = LocalContext.current
     val tv = state.device?.name ?: "TV"
+    val chromecast = state.device?.kind == CastKind.Chromecast
     var sheet by remember { mutableStateOf<String?>(null) }
     var dragging by remember { mutableStateOf<Float?>(null) }
     var dismissedFailure by remember { mutableStateOf<String?>(null) }
@@ -221,7 +305,10 @@ private fun CastController(state: CastState, playing: CastNowPlaying) {
                     Spacer(Modifier.weight(1f))
 
                     val fraction = if (playing.durationMs > 0) (playing.positionMs.toFloat() / playing.durationMs).coerceIn(0f, 1f) else 0f
-                    Slider(
+                    if (playing.durationMs <= 0 && playing.positionMs > 0) {
+                        // The TV doesn't report the length (and Celium couldn't work it out): show the time played.
+                        Text("${time(playing.positionMs)} played", Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.titleMedium)
+                    } else Slider(
                         value = dragging ?: fraction,
                         onValueChange = { dragging = it },
                         onValueChangeFinished = {
@@ -230,7 +317,7 @@ private fun CastController(state: CastState, playing: CastNowPlaying) {
                         },
                         enabled = controlsEnabled && playing.durationMs > 0,
                     )
-                    Row(Modifier.fillMaxWidth()) {
+                    if (playing.durationMs > 0 || playing.positionMs <= 0) Row(Modifier.fillMaxWidth()) {
                         Text(time(dragging?.let { (it * playing.durationMs).toLong() } ?: playing.positionMs), style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.weight(1f))
                         Text(if (playing.durationMs > 0) time(playing.durationMs) else "--:--", style = MaterialTheme.typography.bodySmall)
@@ -247,6 +334,14 @@ private fun CastController(state: CastState, playing: CastNowPlaying) {
                         }
                         IconButton(onClick = CastSession::stop) { Icon(painterResource(R.drawable.baseline_stop_24), "Stop") }
                     }
+                    when {
+                        state.volumeIgnored -> Text(
+                            "$tv doesn't let the phone change its volume. Use the TV's remote.",
+                            Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                        )
+                        state.volume != null -> VolumeRow(state.volume, state.muted, tv)
+                    }
                     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OptionButton("Quality", qualityText(playing), Modifier.weight(1f)) { CastSession.findSources(); sheet = "quality" }
                         OptionButton("Subtitles", playing.currentSubtitle?.let { playing.subtitles.getOrNull(it) }
@@ -260,8 +355,8 @@ private fun CastController(state: CastState, playing: CastNowPlaying) {
         when (sheet) {
             "quality" -> QualityDialog(playing, canSwitch = controlsEnabled || playing.failed, onAdvanced = { sheet = "source" }) { sheet = null }
             "source" -> SourcesDialog(playing, controlsEnabled || playing.failed) { sheet = null }
-            "subs" -> SubtitlesDialog(playing) { sheet = null }
-            "audio" -> AudioDialog(playing, tv, canSwitch = controlsEnabled || playing.failed) { sheet = null }
+            "subs" -> SubtitlesDialog(playing, chromecast) { sheet = null }
+            "audio" -> AudioDialog(playing, tv, chromecast, canSwitch = controlsEnabled || playing.failed) { sheet = null }
         }
 
         playing.prompt?.let { prompt ->
@@ -374,26 +469,33 @@ private fun SourcesDialog(playing: CastNowPlaying, canSwitch: Boolean, onClose: 
 }
 
 @Composable
-private fun SubtitlesDialog(playing: CastNowPlaying, onClose: () -> Unit) {
+private fun SubtitlesDialog(playing: CastNowPlaying, chromecast: Boolean, onClose: () -> Unit) {
+    // Subtitles inside the video (e.g. an HLS stream's own tracks), reported by Chromecast. Celium's own track is listed below.
+    val builtIn = playing.tracks.filter { !it.audio && it.id != ChromecastTarget.SUBTITLE_TRACK_ID }
+    val builtInActive = builtIn.any { it.active }
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Subtitles") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (playing.subtitles.isEmpty()) Text(
+                if (playing.subtitles.isEmpty() && builtIn.isEmpty()) Text(
                     if (playing.findingSources) "Still looking for subtitles…"
+                    else if (chromecast) "This source has no subtitles."
                     else "This source has no separate subtitles. Subtitles built into the video can be turned on with the TV's remote."
                 )
                 LazyColumn(Modifier.heightIn(max = 400.dp)) {
                     item {
-                        SubtitleRow("Off", playing.currentSubtitle == null) { CastSession.setSubtitle(null); onClose() }
+                        SubtitleRow("Off", playing.currentSubtitle == null && !builtInActive) { CastSession.setSubtitle(null); onClose() }
+                    }
+                    items(builtIn, key = { "t" + it.id }) { track ->
+                        SubtitleRow("${trackName(track)} · in the video", track.active) { CastSession.selectTextTrack(track.id); onClose() }
                     }
                     itemsIndexed(playing.subtitles) { index, name ->
-                        SubtitleRow(name, index == playing.currentSubtitle) { CastSession.setSubtitle(index); onClose() }
+                        SubtitleRow(name, index == playing.currentSubtitle && !builtInActive) { CastSession.setSubtitle(index); onClose() }
                     }
                 }
-                Text("Changing subtitles restarts the video on the TV at the same point.", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (playing.subtitles.isNotEmpty()) Text("Changing to another subtitle file restarts the video on the TV at the same point.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
@@ -410,6 +512,12 @@ private fun SubtitleRow(name: String, selected: Boolean, onClick: () -> Unit) {
         Text(name, Modifier.padding(start = 12.dp))
     }
 }
+
+/** "English", or the track's own name when it has no language. */
+private fun trackName(track: CastTrack): String =
+    StreamChoice.normalize(track.language)?.let(StreamChoice::languageName)?.let { language ->
+        if (track.name.equals(track.language, ignoreCase = true) || track.name.isBlank()) language else "$language (${track.name})"
+    } ?: track.name
 
 private fun qualityText(playing: CastNowPlaying): String {
     val now = playing.playingQuality?.let(StreamChoice::label)
@@ -480,14 +588,23 @@ private fun QualityRowView(title: String, note: String?, selected: Boolean, enab
 
 /** Audio language: picks among languages named by the sources; Celium then finds that language. */
 @Composable
-private fun AudioDialog(playing: CastNowPlaying, tv: String, canSwitch: Boolean, onClose: () -> Unit) {
+private fun AudioDialog(playing: CastNowPlaying, tv: String, chromecast: Boolean, canSwitch: Boolean, onClose: () -> Unit) {
+    val audioTracks = playing.tracks.filter { it.audio }
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text("Audio language") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Chromecast reports the languages inside the video: switching is instant.
+                if (audioTracks.size > 1) {
+                    Text("In this video", fontWeight = FontWeight.SemiBold)
+                    audioTracks.forEach { track ->
+                        SubtitleRow(trackName(track), track.active) { CastSession.selectAudioTrack(track.id); onClose() }
+                    }
+                    if (playing.languages.isNotEmpty()) Text("Other sources", Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
+                }
                 if (playing.languages.isEmpty()) {
-                    Text("The sources for this title don't say which language they are in.")
+                    if (audioTracks.size <= 1) Text("The sources for this title don't say which language they are in.")
                 } else {
                     Text("Celium finds a source in this language at your chosen quality.", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -499,7 +616,7 @@ private fun AudioDialog(playing: CastNowPlaying, tv: String, canSwitch: Boolean,
                         }
                     }
                 }
-                Text("If a video has several languages built in (\"Dual Audio\"), $tv chooses between them: change it with the TV's remote " +
+                if (!chromecast) Text("If a video has several languages built in (\"Dual Audio\"), $tv chooses between them: change it with the TV's remote " +
                     "(in Kodi: the audio settings in its player).", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
