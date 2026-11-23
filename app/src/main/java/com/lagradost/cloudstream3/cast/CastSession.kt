@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -205,6 +206,19 @@ object CastSession {
     private fun cap() = ConnectionQuality.autoCap(appContext)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Where source plugins find links: at most 3 at once, at background priority. Some hosts make the
+     * phone solve a proof-of-work puzzle per link; dozens of those in parallel took 5+ cores for minutes
+     * and got Celium killed. Plugins' parallel helpers (amap) run on the caller's threads, so this
+     * limit applies to them too.
+     */
+    private val extractors = java.util.concurrent.Executors.newFixedThreadPool(3) { task ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            task.run()
+        }, "CastLinks").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state.asStateFlow()
     val isConnected get() = renderer != null
@@ -676,7 +690,7 @@ object CastSession {
         val api = getApiFromNameNull(m.q.apiName) ?: return@coroutineScope fail(m, "This source isn't available right now")
 
         // Collect sources in the background; the TV starts with the first good ones.
-        launch { collectLinks(m, api) }
+        val collecting = launch { collectLinks(m, api) }
 
         val host = withContext(Dispatchers.IO) { CastRelay.addressFor(r.host) }
             ?: return@coroutineScope fail(m, "Connect this phone to the same Wi-Fi as ${r.device.name}")
@@ -702,6 +716,12 @@ object CastSession {
             tried += next.url
             if (attempt(m, next, startMs, check = true)) {
                 explainPick(m, next)
+                // Playing: stop finding more sources, which costs a lot of CPU and isn't needed to watch.
+                // Opening Quality, Audio or Subtitles finds them again (findSources).
+                if (!m.done) {
+                    collecting.cancel()
+                    lazySearch = { collectLinks(m, api) }
+                }
                 return@coroutineScope
             }
         }
@@ -720,7 +740,7 @@ object CastSession {
     private suspend fun collectLinks(m: Media, api: MainAPI, savedSubtitle: String? = null) {
         try {
             // isCasting = false: the relay supplies the headers sources need, so take every link.
-            APIRepository(api).loadLinks(m.q.episode.data, false,
+            withContext(extractors) { APIRepository(api).loadLinks(m.q.episode.data, false,
                 { sub ->
                     synchronized(m) { m.subs.add(sub) }
                     if (savedSubtitle != null && sub.url == savedSubtitle) {
@@ -733,7 +753,7 @@ object CastSession {
                 { link ->
                     synchronized(m) { if (m.links.none { it.url == link.url }) m.links.add(link) }
                     publishSoon(m)
-                })
+                }) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
