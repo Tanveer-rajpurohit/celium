@@ -66,6 +66,15 @@ jobs:
           set -euo pipefail
           BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$BUILD_TOOLS/apksigner" verify --verbose app/build/outputs/apk/stable/release/*.apk
+          # Installed apps only accept updates signed with the same key. Stop here if this isn't the
+          # Celium release key (see docs/CELIUM_UPDATES.md), instead of publishing an APK nobody can update to.
+          EXPECTED_CERT=8d4291e8273191a5f04b1204e1bd73a9594f42db7c97886555c0a8bae88fe623
+          ACTUAL_CERT="$("$BUILD_TOOLS/apksigner" verify --print-certs app/build/outputs/apk/stable/release/*.apk \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          if [ "$ACTUAL_CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::The APK is signed with certificate $ACTUAL_CERT, not the Celium release key $EXPECTED_CERT. Users couldn't install it as an update."
+            exit 1
+          fi
           python3 scripts/prepare_release.py \
             --metadata app/build/outputs/apk/stable/release/output-metadata.json \
             --output build/celium-release --tag "$RELEASE_TAG" \
