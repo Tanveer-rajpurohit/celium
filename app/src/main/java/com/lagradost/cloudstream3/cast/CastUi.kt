@@ -586,7 +586,10 @@ private fun QualityRowView(title: String, note: String?, selected: Boolean, enab
     }
 }
 
-/** Audio language: picks among languages named by the sources; Celium then finds that language. */
+/**
+ * Audio language: the languages built into the video when there are several (the relay makes the
+ * chosen one the TV's default), otherwise the languages named by working sources.
+ */
 @Composable
 private fun AudioDialog(playing: CastNowPlaying, tv: String, chromecast: Boolean, canSwitch: Boolean, onClose: () -> Unit) {
     val audioTracks = playing.tracks.filter { it.audio }
@@ -603,22 +606,33 @@ private fun AudioDialog(playing: CastNowPlaying, tv: String, chromecast: Boolean
                     }
                     if (playing.languages.isNotEmpty()) Text("Other sources", Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
                 }
-                if (playing.languages.isEmpty()) {
-                    if (audioTracks.size <= 1) Text("The sources for this title don't say which language they are in.")
-                } else {
-                    Text("Celium finds a source in this language at your chosen quality.", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    LazyColumn(Modifier.heightIn(max = 300.dp)) {
-                        items(playing.languages) { tag ->
-                            QualityRowView(StreamChoice.languageName(tag), null, playing.language == tag, canSwitch) {
-                                CastSession.setLanguage(tag); onClose()
+                when {
+                    // Several languages built into the video: Celium makes the chosen one the TV's default.
+                    audioTracks.size <= 1 && playing.fileLanguages.size > 1 -> {
+                        Text("In this video", fontWeight = FontWeight.SemiBold)
+                        playing.fileLanguages.forEach { tag ->
+                            QualityRowView(StreamChoice.languageName(tag), null, playing.fileLanguage == tag, canSwitch) {
+                                CastSession.setAudioLanguage(tag); onClose()
+                            }
+                        }
+                        Text("Switching restarts the video on $tv at the same spot, which takes a few seconds. Celium remembers your choice.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    playing.languages.isEmpty() -> {
+                        if (audioTracks.size <= 1) Text("This video has one audio language, and the other sources don't name a different one.")
+                    }
+                    else -> {
+                        Text("Celium finds a source in this language at your chosen quality.", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                            items(playing.languages) { tag ->
+                                QualityRowView(StreamChoice.languageName(tag), null, playing.language == tag, canSwitch) {
+                                    CastSession.setAudioLanguage(tag); onClose()
+                                }
                             }
                         }
                     }
                 }
-                if (!chromecast) Text("If a video has several languages built in (\"Dual Audio\"), $tv chooses between them: change it with the TV's remote " +
-                    "(in Kodi: the audio settings in its player).", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text("Close") } },

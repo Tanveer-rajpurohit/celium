@@ -15,6 +15,17 @@ plugins {
 
 val javaTarget = JvmTarget.fromTarget(libs.versions.jvmTarget.get())
 
+// Test builds show which commit they came from: "-dev.<commit count>", plus "-wip" when built
+// with uncommitted changes. Read through providers so the configuration cache re-checks them.
+val devBuildNumber: String = run {
+    fun git(vararg args: String) = runCatching {
+        providers.exec { commandLine("git", *args); isIgnoreExitValue = true }
+            .standardOutput.asText.get().trim()
+    }.getOrDefault("")
+    val count = git("rev-list", "--count", "HEAD").ifEmpty { "0" }
+    if (git("status", "--porcelain").isEmpty()) count else "$count-wip"
+}
+
 abstract class GenerateGitHashTask : DefaultTask() {
 
     @get:InputFile
@@ -170,7 +181,7 @@ android {
             // Published releases already use "app.celium.android.debug" (see celium-release.yml),
             // so test builds need a different ID to install alongside the real app.
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-dev"
+            versionNameSuffix = "-dev.$devBuildNumber"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

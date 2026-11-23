@@ -30,6 +30,10 @@ class CastRelay(baseClient: OkHttpClient) {
         val subtitle: Boolean = false,
         /** Relay URL of the subtitle for this video, announced to TVs that ask for it. */
         val captionUrl: String? = null,
+        /** Header edits that make the chosen audio track the default (MKV/MP4). */
+        val patches: List<BytePatch> = emptyList(),
+        /** HLS: audio language to leave in the playlist (the others are dropped). */
+        val audioLanguage: String? = null,
     )
 
     private val client = baseClient.newBuilder()
@@ -81,27 +85,46 @@ class CastRelay(baseClient: OkHttpClient) {
     data class Saved(
         val token: String, val url: String, val headers: Map<String, String>, val mime: String?,
         val playlist: Boolean, val subtitle: Boolean, val captionUrl: String?,
+        /** Audio edits as "offset:hex" (plain strings survive the JSON round trip). */
+        val patches: List<String> = emptyList(),
+        val audioLanguage: String? = null,
     )
 
-    fun saved(): List<Saved> = entries.map { (token, e) -> Saved(token, e.url, e.headers, e.mime, e.playlist, e.subtitle, e.captionUrl) }
+    fun saved(): List<Saved> = entries.map { (token, e) ->
+        Saved(token, e.url, e.headers, e.mime, e.playlist, e.subtitle, e.captionUrl,
+            e.patches.map { p -> "${p.offset}:" + p.bytes.joinToString("") { "%02x".format(it) } }, e.audioLanguage)
+    }
 
     fun restore(saved: List<Saved>) = saved.forEach {
-        entries[it.token] = Entry(it.url, it.headers, it.mime, it.playlist, it.subtitle, it.captionUrl)
-        tokens[it.url] = it.token
+        val patches = it.patches.orEmpty().mapNotNull { s ->
+            val offset = s.substringBefore(':').toLongOrNull() ?: return@mapNotNull null
+            val hex = s.substringAfter(':')
+            BytePatch(offset, ByteArray(hex.length / 2) { k -> hex.substring(2 * k, 2 * k + 2).toInt(16).toByte() })
+        }
+        entries[it.token] = Entry(it.url, it.headers, it.mime, it.playlist, it.subtitle, it.captionUrl, patches, it.audioLanguage)
+        tokens[key(it.url, patches, it.audioLanguage)] = it.token
     }
 
     /** Forget all streams of the previous video. */
     fun clear() { entries.clear(); tokens.clear() }
 
-    /** Returns the relay URL the TV should open for [url]. Same upstream URL gives the same token. */
+    /** Same video with another audio choice gets another URL, so a TV never reuses a cached header. */
+    private fun key(url: String, patches: List<BytePatch>, audioLanguage: String?) =
+        if (patches.isEmpty() && audioLanguage == null) url else "$url#audio=${audioLanguage}:${patches.hashCode()}"
+
+    /**
+     * Returns the relay URL the TV should open for [url]. The same upstream URL and audio choice give
+     * the same token. [patches] and [audioLanguage] make the chosen audio track the one the TV plays.
+     */
     fun register(
         url: String, headers: Map<String, String>, mime: String?, playlist: Boolean, name: String = "media",
         subtitle: Boolean = false, captionUrl: String? = null,
+        patches: List<BytePatch> = emptyList(), audioLanguage: String? = null,
     ): String {
-        val token = tokens.getOrPut(url) {
+        val token = tokens.getOrPut(key(url, patches, audioLanguage)) {
             ByteArray(12).also(random::nextBytes).joinToString("") { "%02x".format(it) }
         }
-        entries[token] = Entry(url, headers, mime, playlist, subtitle, captionUrl)
+        entries[token] = Entry(url, headers, mime, playlist, subtitle, captionUrl, patches, audioLanguage)
         val ext = mime?.let(CastLinks::extension) ?: url.substringAfterLast('/').substringBefore('?').substringAfterLast('.', "bin").take(5)
         val port = server?.localPort ?: throw IOException("Relay is not running")
         return "http://$host:$port/s/$token/$name.$ext"
@@ -177,7 +200,8 @@ class CastRelay(baseClient: OkHttpClient) {
             if (entry.playlist || upstreamType.contains("mpegurl", true)) {
                 val text = body.string()
                 if (HlsRewriter.isPlaylistBody(text)) {
-                    val rewritten = HlsRewriter.rewrite(text, response.request.url.toString()) { url, nested ->
+                    val chosen = entry.audioLanguage?.let { FileAudio.preferHlsAudio(text, it) } ?: text
+                    val rewritten = HlsRewriter.rewrite(chosen, response.request.url.toString()) { url, nested ->
                         register(url, entry.headers, if (nested) "application/vnd.apple.mpegurl" else null, nested, if (nested) "playlist" else "segment")
                     }.toByteArray()
                     respond(out, "200 OK", mapOf(
@@ -208,8 +232,28 @@ class CastRelay(baseClient: OkHttpClient) {
             // Samsung-style TVs ask for the subtitle location on the video response.
             if (entry.captionUrl != null && clientHeaders.containsKey("getcaptioninfo.sec")) headers["CaptionInfo.sec"] = entry.captionUrl
             respond(out, if (response.code == 206) "206 Partial Content" else "200 OK", headers)
-            if (!head) body.byteStream().copyTo(out, 64 * 1024)
+            if (!head) {
+                if (entry.patches.isEmpty()) body.byteStream().copyTo(out, 64 * 1024)
+                else {
+                    // Where this response starts in the file, so the audio edits land on the right bytes.
+                    val start = if (response.code == 206) contentRangeStart(response.header("Content-Range")) ?: return else 0L
+                    copyPatched(body.byteStream(), out, start, entry.patches)
+                }
+            }
             out.flush()
+        }
+    }
+
+    private fun copyPatched(input: InputStream, out: OutputStream, start: Long, patches: List<BytePatch>) {
+        val buffer = ByteArray(64 * 1024)
+        val lastPatched = patches.maxOf { it.offset + it.bytes.size }
+        var position = start
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            if (position < lastPatched) applyPatches(buffer, n, position, patches)
+            out.write(buffer, 0, n)
+            position += n
         }
     }
 
@@ -236,6 +280,20 @@ class CastRelay(baseClient: OkHttpClient) {
     }
 
     companion object {
+        /** Writes the parts of [patches] that fall in [buffer] (the first [length] bytes, starting at file offset [position]). */
+        fun applyPatches(buffer: ByteArray, length: Int, position: Long, patches: List<BytePatch>) {
+            for (patch in patches) {
+                for (k in patch.bytes.indices) {
+                    val at = patch.offset + k - position
+                    if (at in 0 until length) buffer[at.toInt()] = patch.bytes[k]
+                }
+            }
+        }
+
+        /** First byte of a "bytes 100-199/1000" Content-Range. */
+        fun contentRangeStart(header: String?): Long? =
+            header?.trim()?.removePrefix("bytes")?.trim()?.substringBefore('-')?.toLongOrNull()
+
         private val CORS = mapOf(
             "Access-Control-Allow-Origin" to "*",
             "Access-Control-Allow-Methods" to "GET, HEAD, OPTIONS",

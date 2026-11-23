@@ -77,8 +77,12 @@ data class CastNowPlaying(
     val qualities: List<QualityRow> = emptyList(),
     /** Audio language the user wants (two-letter tag); null = no preference yet. */
     val language: String? = null,
-    /** Audio languages named by the sources found. */
+    /** Audio languages named by the sources found (sources that haven't failed). */
     val languages: List<String> = emptyList(),
+    /** Audio languages inside the playing video ("Dual Audio"), when Celium can choose between them. */
+    val fileLanguages: List<String> = emptyList(),
+    /** Which of [fileLanguages] the TV plays. */
+    val fileLanguage: String? = null,
     /** Short information that stays visible, e.g. "720p wasn't available, playing 1080p". */
     val notice: String? = null,
     val prompt: CastPrompt? = null,
@@ -116,6 +120,8 @@ data class CastResume(
     val subtitleLang: String? = null,
     /** The TV fetches the video itself (not through the phone's relay). */
     val direct: Boolean = false,
+    /** Built-in audio language the TV plays, when the video has several. */
+    val audioPlaying: String? = null,
 )
 
 data class CastState(
@@ -160,6 +166,10 @@ object CastSession {
         @Volatile var knownDuration: Long? = null
         /** The current video is fetched by the TV itself, not relayed by the phone. */
         @Volatile var direct = false
+        /** Audio tracks inside [audioUrl] (only set when there are several), and the one the TV plays. */
+        @Volatile var audio: AudioLayout? = null
+        @Volatile var audioUrl: String? = null
+        @Volatile var audioPlaying: String? = null
 
         fun ranked() = synchronized(this) { CastLinks.rank(links, chromecast = renderer?.isChromecast == true) }
         fun subtitles() = synchronized(this) { subs.distinctBy { it.url } }
@@ -178,6 +188,19 @@ object CastSession {
     /** Audio language the user listens to; kept for the next episodes. */
     @Volatile private var language: String? = null
     @Volatile private var appContext: Context? = null
+
+    private const val AUDIO_KEY = "celium_cast_audio_language"
+
+    /**
+     * The language the TV should play when a video has several built in. Chosen once (Celium asks the
+     * first time) and remembered across sessions; changed from the Audio menu.
+     */
+    private var audioChoice: String?
+        get() = runCatching { getKey<String>(AUDIO_KEY) }.getOrNull()
+        set(value) { runCatching { if (value == null) removeKey(AUDIO_KEY) else setKey(AUDIO_KEY, value) } }
+
+    /** Answer to the open "which audio" question, if one is waiting. */
+    @Volatile private var audioAnswer: kotlinx.coroutines.CompletableDeferred<String?>? = null
 
     private fun cap() = ConnectionQuality.autoCap(appContext)
 
@@ -354,7 +377,74 @@ object CastSession {
         setQuality(chosenQuality)
     }
 
-    fun dismissPrompt() = _state.update { s -> s.copy(nowPlaying = s.nowPlaying?.copy(prompt = null)) }
+    /**
+     * Audio menu: the language the TV should play, remembered for next time. When the playing video
+     * has it built in, Celium reloads the video at the same spot with that track as the default;
+     * otherwise it looks for a source in that language.
+     */
+    fun setAudioLanguage(tag: String) {
+        val m = media ?: return
+        audioChoice = tag
+        language = tag
+        val current = m.current
+        val layout = m.audio?.takeIf { m.audioUrl == current?.url }
+        if (current == null || layout == null || !layout.canSelect(tag)) return setLanguage(tag)
+        if (m.audioPlaying == tag) return publish(m)
+        val position = _state.value.nowPlaying?.positionMs ?: 0
+        monitorJob?.cancel(); switchJob?.cancel()
+        switchJob = scope.launch {
+            publish(m) { copy(message = "Switching to ${StreamChoice.languageName(tag)}…", notice = null) }
+            if (!attempt(m, current, position, check = false)) fail(m, "The TV couldn't reload the video in ${StreamChoice.languageName(tag)}")
+        }
+    }
+
+    fun dismissPrompt() {
+        audioAnswer?.complete(null)
+        _state.update { s -> s.copy(nowPlaying = s.nowPlaying?.copy(prompt = null)) }
+    }
+
+    /**
+     * Picks which built-in audio track the TV plays: the remembered language when the video has it,
+     * otherwise (the first time) the user is asked. Null keeps the video's own default.
+     */
+    private suspend fun chooseAudio(m: Media, layout: AudioLayout): String? {
+        val choice = audioChoice
+        if (choice != null) {
+            if (layout.canSelect(choice)) return choice
+            val playing = layout.tracks[layout.defaultIndex].language
+            if (choice !in layout.languages) publish(m) {
+                copy(notice = "No ${StreamChoice.languageName(choice)} audio in this video, playing ${StreamChoice.languageName(playing)}")
+            }
+            return null
+        }
+        val selectable = layout.languages.filter(layout::canSelect)
+        if (selectable.size < 2) return null
+        val answer = kotlinx.coroutines.CompletableDeferred<String?>()
+        audioAnswer = answer
+        val defaultLanguage = layout.tracks[layout.defaultIndex].language
+        // The video's own default goes last: it's the dialog's main button, and what dismissing it keeps.
+        val ordered = selectable.sortedBy { it == defaultLanguage }
+        val pick: (String) -> Unit = { tag ->
+            audioChoice = tag
+            language = tag
+            answer.complete(tag)
+            _state.update { s -> s.copy(nowPlaying = s.nowPlaying?.copy(prompt = null)) }
+        }
+        publish(m) {
+            copy(message = "Choose the audio language", prompt = CastPrompt(
+                "Which audio should the TV play?",
+                "This video has ${selectable.joinToString(" and ") { StreamChoice.languageName(it) }} built in. " +
+                    "Celium remembers your choice; change it any time under Audio.",
+                ordered.map { tag -> StreamChoice.languageName(tag) to { pick(tag) } },
+            ))
+        }
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(90_000) { answer.await() }
+        } finally {
+            audioAnswer = null
+            update(m) { if (prompt?.title == "Which audio should the TV play?") copy(prompt = null) else this }
+        }
+    }
 
     private fun promptFor(m: Media, quality: Int, previousChoice: Int?, noneWorked: Boolean) {
         val options = m.options()
@@ -419,7 +509,8 @@ object CastSession {
             if (bucket != wanted) notes += "${StreamChoice.label(wanted)} wasn't available, playing ${bucket?.let(StreamChoice::label) ?: "another quality"}"
         }
         val wantedLanguage = language
-        if (wantedLanguage != null && StreamChoice.match(StreamChoice.languages(link.name), wantedLanguage) == LangMatch.Other) {
+        if (wantedLanguage != null && m.audioPlaying != wantedLanguage &&
+            StreamChoice.match(StreamChoice.languages(link.name), wantedLanguage) == LangMatch.Other) {
             notes += "No ${StreamChoice.languageName(wantedLanguage)} source worked, playing ${StreamChoice.languageName(StreamChoice.singleLanguage(link.name))}"
         }
         if (notes.isNotEmpty()) publish(m) { copy(notice = notes.joinToString(". ")) }
@@ -533,8 +624,12 @@ object CastSession {
             playingQuality = m.current?.let { StreamChoice.bucket(it.quality) },
             autoCap = cap(),
             qualities = StreamChoice.available(ranked.map { StreamOption(it.url, it.source, it.name, it.quality) }, failures.keys),
-            language = language,
-            languages = ranked.flatMap { StreamChoice.languages(it.name).orEmpty() }.filter { it != StreamChoice.MULTI }.distinct(),
+            language = m.audioPlaying ?: language,
+            // Only sources that haven't failed: a language nobody can play shouldn't be offered.
+            languages = ranked.filter { it.url !in failures }
+                .flatMap { StreamChoice.languages(it.name).orEmpty() }.filter { it != StreamChoice.MULTI }.distinct(),
+            fileLanguages = m.audio?.takeIf { m.audioUrl == m.current?.url }?.let { a -> a.languages.filter(a::canSelect) }.orEmpty(),
+            fileLanguage = m.audioPlaying.takeIf { m.audioUrl == m.current?.url },
         )
     }
 
@@ -666,6 +761,7 @@ object CastSession {
                 m.q.apiName, m.q.title, m.q.poster, m.q.episodes, m.q.index,
                 link.source, link.name, link.url, link.referer, link.quality, link.type, link.headers,
                 m.subtitle?.url, host, port, relay.saved(), chosenQuality, language, m.subtitle?.lang, m.direct,
+                m.audioPlaying,
             ).toJson())
         }.onFailure(::logError)
     }
@@ -738,6 +834,14 @@ object CastSession {
             }
             CastService.start(ctx)
             learnDuration(m, link)
+            // The Audio menu lists the languages inside the video again.
+            scope.launch {
+                val layout = runCatching { FileAudio.read(app.baseClient, link.url, link.getAllHeaders(), link.type == ExtractorLinkType.M3U8) }.getOrNull()
+                if (m.current?.url != link.url) return@launch
+                m.audio = layout; m.audioUrl = link.url
+                m.audioPlaying = layout?.let { saved.audioPlaying ?: it.tracks[it.defaultIndex].language }
+                publish(m)
+            }
             if (sameUrls) monitor(m, r)
             else switchJob = scope.launch {
                 if (!attempt(m, link, position, check = false)) fail(m, "Couldn't reconnect to ${device.name}. Tap Retry.")
@@ -867,17 +971,30 @@ object CastSession {
             publish(m) { copy(message = "$label: $problem. Trying the next source…") }
             return false
         }
+        // Several languages built in ("Dual Audio"): TVs play the file's default track and can't be told
+        // otherwise, so the relay makes the chosen language the default as the video passes through.
+        if (m.audioUrl != link.url) {
+            m.audio = withContext(Dispatchers.IO) { runCatching { FileAudio.read(app.baseClient, link.url, headers, playlist) }.getOrNull() }
+            m.audioUrl = link.url
+        }
+        val layout = m.audio
+        val audio = layout?.let { chooseAudio(m, it) }?.takeIf { layout.indexOf(it) != layout.defaultIndex }
+        val patches = if (audio != null && layout?.hls == false) layout.patches.getOrNull(layout.indexOf(audio) ?: -1).orEmpty() else emptyList()
+        val hlsAudio = audio?.takeIf { layout?.hls == true }
+        m.audioPlaying = layout?.let { audio ?: it.tracks[it.defaultIndex].language }
+
         publish(m) { copy(message = "Starting $label on $tv…") }
         val mime = CastLinks.mime(link.type, link.url)
         val title = listOfNotNull(m.q.title, label(m.q)).joinToString(" · ")
         val poster = m.q.episode.poster ?: m.q.poster
         // Let the TV fetch the video itself when it needs no special headers: then the phone doesn't relay the
         // whole video. Chromecast's player needs CORS for HLS, which hosts rarely send, so HLS stays relayed there.
-        val tryDirect = directOk != false && !(r.isChromecast && playlist) &&
+        // A changed audio default only exists in the relayed copy.
+        val tryDirect = directOk != false && !(r.isChromecast && playlist) && audio == null &&
             withContext(Dispatchers.IO) { runCatching { LinkCheck.worksDirect(app.baseClient, link.url, playlist) }.getOrDefault(false) }
         relay.clear()
         val subUrl = m.subtitle?.let { relay.register(it.url, it.headers.orEmpty(), r.subtitleMime, false, "subtitle", subtitle = true) }
-        val relayUrl = relay.register(link.url, headers, mime, playlist, "video", captionUrl = subUrl)
+        val relayUrl = relay.register(link.url, headers, mime, playlist, "video", captionUrl = subUrl, patches = patches, audioLanguage = hlsAudio)
         suspend fun send(url: String): Boolean = try {
             m.current = null // the TV is about to leave the previous video
             if (r.isChromecast) {
