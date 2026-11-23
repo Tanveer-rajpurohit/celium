@@ -208,17 +208,37 @@ object CastSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * Where source plugins find links: at most 3 at once, at background priority. Some hosts make the
-     * phone solve a proof-of-work puzzle per link; dozens of those in parallel took 5+ cores for minutes
-     * and got Celium killed. Plugins' parallel helpers (amap) run on the caller's threads, so this
-     * limit applies to them too.
+     * Where source plugins find links. Some hosts make the phone solve a proof-of-work puzzle per link;
+     * dozens of those in parallel took 5+ cores for minutes and got Celium killed. Plugins' parallel
+     * helpers (amap) run on the caller's threads, so these limits apply to them too:
+     * - until the first source plays: [FAST_THREADS] threads at normal priority, so the video starts quickly;
+     * - afterwards (searches from the Quality/Audio/Subtitles menus): [SLOW_THREADS] at background priority.
      */
-    private val extractors = java.util.concurrent.Executors.newFixedThreadPool(3) { task ->
-        Thread({
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
+    private val linkPool = java.util.concurrent.ThreadPoolExecutor(
+        FAST_THREADS, FAST_THREADS, 10, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
+    ) { task -> Thread(task, "CastLinks").apply { isDaemon = true } }
+    @Volatile private var linksFast = true
+    private val extractors = java.util.concurrent.Executor { task ->
+        linkPool.execute {
+            android.os.Process.setThreadPriority(
+                if (linksFast) android.os.Process.THREAD_PRIORITY_DEFAULT else android.os.Process.THREAD_PRIORITY_BACKGROUND
+            )
             task.run()
-        }, "CastLinks").apply { isDaemon = true }
+        }
     }.asCoroutineDispatcher()
+
+    /** Switches link finding between starting a video (fast) and the background (light). */
+    private fun linkSpeed(fast: Boolean) = synchronized(linkPool) {
+        linksFast = fast
+        val size = if (fast) FAST_THREADS else SLOW_THREADS
+        // The maximum can't go below the core size, so the order depends on the direction.
+        // Threads above the new maximum stop after their current task.
+        if (fast) { linkPool.maximumPoolSize = size; linkPool.corePoolSize = size }
+        else { linkPool.corePoolSize = size; linkPool.maximumPoolSize = size }
+    }
+
+    private const val FAST_THREADS = 5
+    private const val SLOW_THREADS = 2
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state.asStateFlow()
     val isConnected get() = renderer != null
@@ -689,7 +709,8 @@ object CastSession {
         userStopped = false
         val api = getApiFromNameNull(m.q.apiName) ?: return@coroutineScope fail(m, "This source isn't available right now")
 
-        // Collect sources in the background; the TV starts with the first good ones.
+        // Collect sources in the background; the TV starts with the first good ones. Full speed until one plays.
+        linkSpeed(fast = true)
         val collecting = launch { collectLinks(m, api) }
 
         val host = withContext(Dispatchers.IO) { CastRelay.addressFor(r.host) }
@@ -717,7 +738,8 @@ object CastSession {
             if (attempt(m, next, startMs, check = true)) {
                 explainPick(m, next)
                 // Playing: stop finding more sources, which costs a lot of CPU and isn't needed to watch.
-                // Opening Quality, Audio or Subtitles finds them again (findSources).
+                // Opening Quality, Audio or Subtitles finds them again (findSources), at the light speed.
+                linkSpeed(fast = false)
                 if (!m.done) {
                     collecting.cancel()
                     lazySearch = { collectLinks(m, api) }
@@ -866,7 +888,9 @@ object CastSession {
             else switchJob = scope.launch {
                 if (!attempt(m, link, position, check = false)) fail(m, "Couldn't reconnect to ${device.name}. Tap Retry.")
             }
-            // Stay on this source. Others are only looked up if the user opens a menu to change something.
+            // Stay on this source. Others are only looked up if the user opens a menu to change something,
+            // at the light speed: the video is already playing.
+            linkSpeed(fast = false)
             m.done = true
             publish(m)
             lazySearch = { getApiFromNameNull(saved.apiName)?.let { api -> collectLinks(m, api, saved.subtitleUrl) } }
