@@ -29,7 +29,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -208,37 +207,17 @@ object CastSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * Where source plugins find links. Some hosts make the phone solve a proof-of-work puzzle per link;
-     * dozens of those in parallel took 5+ cores for minutes and got Celium killed. Plugins' parallel
-     * helpers (amap) run on the caller's threads, so these limits apply to them too:
-     * - until the first source plays: [FAST_THREADS] threads at normal priority, so the video starts quickly;
-     * - afterwards (searches from the Quality/Audio/Subtitles menus): [SLOW_THREADS] at background priority.
+     * Where source plugins find links: full speed while someone waits for a video to start (first
+     * play, Retry, switching source or quality), light while it plays. See [LinkPool].
      */
-    private val linkPool = java.util.concurrent.ThreadPoolExecutor(
-        FAST_THREADS, FAST_THREADS, 10, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
-    ) { task -> Thread(task, "CastLinks").apply { isDaemon = true } }
-    @Volatile private var linksFast = true
-    private val extractors = java.util.concurrent.Executor { task ->
-        linkPool.execute {
-            android.os.Process.setThreadPriority(
-                if (linksFast) android.os.Process.THREAD_PRIORITY_DEFAULT else android.os.Process.THREAD_PRIORITY_BACKGROUND
-            )
-            task.run()
-        }
-    }.asCoroutineDispatcher()
-
-    /** Switches link finding between starting a video (fast) and the background (light). */
-    private fun linkSpeed(fast: Boolean) = synchronized(linkPool) {
-        linksFast = fast
-        val size = if (fast) FAST_THREADS else SLOW_THREADS
-        // The maximum can't go below the core size, so the order depends on the direction.
-        // Threads above the new maximum stop after their current task.
-        if (fast) { linkPool.maximumPoolSize = size; linkPool.corePoolSize = size }
-        else { linkPool.corePoolSize = size; linkPool.maximumPoolSize = size }
+    private val linkPool = LinkPool { fast ->
+        android.os.Process.setThreadPriority(
+            if (fast) android.os.Process.THREAD_PRIORITY_DEFAULT else android.os.Process.THREAD_PRIORITY_BACKGROUND
+        )
     }
+    private val extractors get() = linkPool.dispatcher
 
-    private const val FAST_THREADS = 5
-    private const val SLOW_THREADS = 2
+    private fun linkSpeed(fast: Boolean) = linkPool.speed(fast)
     private val _state = MutableStateFlow(CastState())
     val state: StateFlow<CastState> = _state.asStateFlow()
     val isConnected get() = renderer != null
@@ -279,8 +258,8 @@ object CastSession {
         forget()
         // Stop the TV before closing the relay, or it keeps retrying a dead stream.
         scope.launch {
-            if (wasPlaying && r != null) runCatching { withTimeout(5_000) { r.stop() } }
-            r?.let { runCatching { withTimeout(5_000) { it.release() } } }
+            if (wasPlaying && r != null) catching { withTimeout(5_000) { r.stop() } }
+            r?.let { catching { withTimeout(5_000) { it.release() } } }
             if (renderer == null) relay?.stop()
         }
         _state.value = CastState()
@@ -358,7 +337,7 @@ object CastSession {
         media = null
         forget()
         _state.update { it.copy(nowPlaying = null, controllerOpen = false) }
-        renderer?.let { r -> scope.launch { runCatching { r.stop() } } }
+        renderer?.let { r -> scope.launch { catching { r.stop() } } }
     }
 
     /** Plays another source of the same title from the current position (Advanced). */
@@ -589,7 +568,7 @@ object CastSession {
         if (!r.isChromecast) return
         scope.launch {
             delay(1_500)
-            val tracks = runCatching { r.tracks() }.getOrNull() ?: return@launch
+            val tracks = catching { r.tracks() }.getOrNull() ?: return@launch
             publish(m) { copy(tracks = tracks) }
         }
     }
@@ -620,7 +599,7 @@ object CastSession {
     private fun control(block: suspend (CastTarget) -> Unit) {
         val r = renderer ?: return
         scope.launch {
-            try { block(r) } catch (e: Exception) { setPlaying { copy(message = "The TV didn't respond") } }
+            try { block(r) } catch (e: CancellationException) { throw e } catch (e: Exception) { setPlaying { copy(message = "The TV didn't respond") } }
         }
     }
 
@@ -830,7 +809,7 @@ object CastSession {
         scope.launch {
             val device = DlnaDevice(saved.deviceId, saved.deviceName, saved.avTransportUrl, saved.renderingControlUrl)
             val r = DlnaRenderer(device, app.baseClient)
-            val status = runCatching { withTimeout(8_000) { r.status() } }.getOrNull()
+            val status = catching { withTimeout(8_000) { r.status() } }.getOrNull()
             // Only if the TV is still on our video, not something started on the TV since.
             val ours = status?.trackUri?.let { if (saved.direct) it == saved.linkUrl else it.contains(":${saved.relayPort}/s/") } ?: true
             if (status == null || status.state !in ACTIVE_STATES || !ours || saved.index !in saved.episodes.indices || renderer != null) {
@@ -884,7 +863,7 @@ object CastSession {
             learnDuration(m, link)
             // The Audio menu lists the languages inside the video again.
             scope.launch {
-                val layout = runCatching { FileAudio.read(app.baseClient, link.url, link.getAllHeaders(), link.type == ExtractorLinkType.M3U8) }.getOrNull()
+                val layout = catching { FileAudio.read(app.baseClient, link.url, link.getAllHeaders(), link.type == ExtractorLinkType.M3U8) }.getOrNull()
                 if (m.current?.url != link.url) return@launch
                 m.audio = layout; m.audioUrl = link.url
                 m.audioPlaying = layout?.let { saved.audioPlaying ?: it.tracks[it.defaultIndex].language }
@@ -917,8 +896,8 @@ object CastSession {
         if (!r.hasVolume || _state.value.volumeIgnored) return
         scope.launch {
             val started = System.currentTimeMillis()
-            val volume = runCatching { r.volume() }.getOrNull() ?: return@launch
-            val tvMuted = runCatching { r.muted() }.getOrNull() ?: false
+            val volume = catching { r.volume() }.getOrNull() ?: return@launch
+            val tvMuted = catching { r.muted() }.getOrNull() ?: false
             if (renderer !== r || volumeChangedAt > started) return@launch
             if (volume > 0) volumeBeforeMute = null
             _state.update { it.copy(volume = volume, muted = tvMuted || (volume == 0 && volumeBeforeMute != null)) }
@@ -940,11 +919,11 @@ object CastSession {
         volumeJob = scope.launch {
             delay(120)
             try {
-                if (unmuteTv) runCatching { r.setMuted(false) }
+                if (unmuteTv) catching { r.setMuted(false) }
                 r.setVolume(target)
                 // Some TVs accept the command but keep their volume: check, and stop offering it if so.
                 delay(700)
-                val actual = runCatching { r.volume() }.getOrNull()
+                val actual = catching { r.volume() }.getOrNull()
                 if (actual != null && actual != target && actual == before && kotlin.math.abs(target - (before ?: target)) > 2) {
                     _state.update { it.copy(volume = actual, volumeIgnored = true) }
                 }
@@ -1024,7 +1003,7 @@ object CastSession {
         // Several languages built in ("Dual Audio"): TVs play the file's default track and can't be told
         // otherwise, so the relay makes the chosen language the default as the video passes through.
         if (m.audioUrl != link.url) {
-            m.audio = withContext(Dispatchers.IO) { runCatching { FileAudio.read(app.baseClient, link.url, headers, playlist) }.getOrNull() }
+            m.audio = withContext(Dispatchers.IO) { catching { FileAudio.read(app.baseClient, link.url, headers, playlist) }.getOrNull() }
             m.audioUrl = link.url
         }
         val layout = m.audio
@@ -1041,7 +1020,7 @@ object CastSession {
         // whole video. Chromecast's player needs CORS for HLS, which hosts rarely send, so HLS stays relayed there.
         // A changed audio default only exists in the relayed copy.
         val tryDirect = directOk != false && !(r.isChromecast && playlist) && audio == null &&
-            withContext(Dispatchers.IO) { runCatching { LinkCheck.worksDirect(app.baseClient, link.url, playlist) }.getOrDefault(false) }
+            withContext(Dispatchers.IO) { catching { LinkCheck.worksDirect(app.baseClient, link.url, playlist) }.getOrDefault(false) }
         relay.clear()
         val subUrl = m.subtitle?.let { relay.register(it.url, it.headers.orEmpty(), r.subtitleMime, false, "subtitle", subtitle = true) }
         val relayUrl = relay.register(link.url, headers, mime, playlist, "video", captionUrl = subUrl, patches = patches, audioLanguage = hlsAudio)
@@ -1051,7 +1030,7 @@ object CastSession {
                 // A Chromecast replaces the video and starts at the position itself.
                 r.load(CastLoad(url, mime, title, subUrl, m.subtitle?.lang, poster, startMs))
             } else {
-                runCatching { r.stop() }
+                catching { r.stop() }
                 r.load(CastLoad(url, mime, title, subUrl, m.subtitle?.lang, poster))
                 r.play()
             }
@@ -1078,14 +1057,14 @@ object CastSession {
             m.tvFailures++
             m.fail(link.url, "$tv couldn't play this video")
             publish(m) { copy(message = "$label: $tv couldn't play it. Trying the next source…") }
-            runCatching { r.stop() }
+            catching { r.stop() }
             return false
         }
         m.current = link
         if (language == null) language = StreamChoice.singleLanguage(link.name)
         persist(m, r, relay)
         learnDuration(m, link)
-        if (startMs > 0 && !r.isChromecast) runCatching { r.seek(startMs) }
+        if (startMs > 0 && !r.isChromecast) catching { r.seek(startMs) }
         publish(m) { copy(loading = false, failed = false, message = null, positionMs = startMs, paused = false) }
         monitor(m, r)
         refreshTracks(m)
@@ -1096,7 +1075,7 @@ object CastSession {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < 20_000) {
             delay(1_000)
-            val state = runCatching { r.status().state }.getOrNull()
+            val state = catching { r.status().state }.getOrNull()
             if (state == "PLAYING") return true
             // Some renderers report STOPPED briefly before starting; only give up after a grace period.
             if ((state == "STOPPED" || state == "NO_MEDIA_PRESENT") && System.currentTimeMillis() - start > 8_000) return false

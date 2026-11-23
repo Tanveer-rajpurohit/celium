@@ -89,7 +89,7 @@ object DlnaDiscovery {
 
     suspend fun describe(locations: Set<String>, fetch: suspend (String) -> String): List<DlnaDevice> = coroutineScope {
         locations.map { location ->
-            async(Dispatchers.IO) { runCatching { DlnaProtocol.parseDescription(fetch(location), location) }.getOrNull() }
+            async(Dispatchers.IO) { catching { DlnaProtocol.parseDescription(fetch(location), location) }.getOrNull() }
         }.awaitAll().filterNotNull().distinctBy { it.id }.sortedBy { it.name.lowercase() }
     }
 }
@@ -144,7 +144,7 @@ class DlnaRenderer(val dlna: DlnaDevice, baseClient: OkHttpClient) : CastTarget 
 
     override suspend fun status(): CastStatus {
         val transport = call(DlnaProtocol.AV_TRANSPORT, "GetTransportInfo")
-        val position = runCatching { call(DlnaProtocol.AV_TRANSPORT, "GetPositionInfo") }.getOrNull()
+        val position = catching { call(DlnaProtocol.AV_TRANSPORT, "GetPositionInfo") }.getOrNull()
         return CastStatus(
             state = DlnaProtocol.tag(transport, "CurrentTransportState") ?: "UNKNOWN",
             positionMs = DlnaProtocol.parseTime(position?.let { DlnaProtocol.tag(it, "RelTime") }),

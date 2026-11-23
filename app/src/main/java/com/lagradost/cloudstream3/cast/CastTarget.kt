@@ -1,5 +1,19 @@
 package com.lagradost.cloudstream3.cast
 
+import kotlinx.coroutines.CancellationException
+
+/**
+ * Like runCatching, for calls that wait on the TV or the network: failures become a failed Result,
+ * but a cancelled coroutine stays cancelled instead of carrying on (e.g. after the user switched source).
+ */
+internal inline fun <T> catching(block: () -> T): Result<T> = try {
+    Result.success(block())
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
 enum class CastKind { Dlna, Chromecast }
 
 /** The device being cast to, as shown to the user. */

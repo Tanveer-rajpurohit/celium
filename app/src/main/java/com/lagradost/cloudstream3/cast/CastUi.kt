@@ -78,7 +78,7 @@ private fun DevicePickerDialog(onClose: () -> Unit) {
     if (mirror) return MirrorScreenDialog(onClose = { mirror = false; onClose() })
     LaunchedEffect(attempt) {
         scanning = true
-        devices = runCatching { DlnaDiscovery.scan(context) }.getOrDefault(emptyList())
+        devices = catching { DlnaDiscovery.scan(context) }.getOrDefault(emptyList())
         scanning = false
     }
     // Chromecasts / Google TVs, found by Android's media router while this dialog is open.
