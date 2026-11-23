@@ -57,7 +57,7 @@ the old installations that require the one-time migration.
 ## Release a tested version
 
 1. Update `versionName` and increase `versionCode` in `app/build.gradle.kts`.
-   Current values are `7.0.6-celium` and `77`.
+   Current values are `7.1.0-celium` and `78`.
 2. Commit and push the changes. Tag the intended commit with the matching numeric
    version, for example `git tag v7.0.6`, then `git push origin v7.0.6`.
 3. The **Celium release** workflow runs the release packaging tests and Android unit
