@@ -57,14 +57,7 @@ class CastRelay(baseClient: OkHttpClient) {
     fun start(localHost: String, preferredPort: Int = 0) {
         host = localHost
         if (isRunning) return
-        val socket = ServerSocket()
-        socket.reuseAddress = true
-        try {
-            socket.bind(InetSocketAddress(preferredPort))
-        } catch (e: IOException) {
-            if (preferredPort == 0) throw e
-            socket.bind(InetSocketAddress(0))
-        }
+        val socket = bind(preferredPort)
         server = socket
         pool.execute {
             while (!socket.isClosed) {
@@ -72,6 +65,27 @@ class CastRelay(baseClient: OkHttpClient) {
                 pool.execute { handle(client) }
             }
         }
+    }
+
+    /**
+     * A listening socket on [preferredPort] when possible, else any free port. A port that was just
+     * closed can stay taken for a moment (on Linux the listening thread releases it), so the saved
+     * port is retried briefly before giving up: TVs keep using URLs with that port.
+     */
+    private fun bind(preferredPort: Int): ServerSocket {
+        if (preferredPort != 0) {
+            repeat(10) { attempt ->
+                val socket = ServerSocket().apply { reuseAddress = true }
+                try {
+                    socket.bind(InetSocketAddress(preferredPort))
+                    return socket
+                } catch (_: IOException) {
+                    runCatching { socket.close() }
+                    if (attempt < 9) Thread.sleep(50)
+                }
+            }
+        }
+        return ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(0)) }
     }
 
     @Synchronized
